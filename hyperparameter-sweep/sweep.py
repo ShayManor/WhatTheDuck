@@ -304,9 +304,10 @@ def main():
         "num_qubits": args.num_qubits,
         "alpha": args.alpha,
     }
+    print(json.dumps(best, indent=2))
+
     with open(args.out, "w") as f:
         json.dump(best, f, indent=2)
-    print(json.dumps(best, indent=2))
 
 
 if __name__ == "__main__":
