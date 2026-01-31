@@ -510,7 +510,11 @@ print("\nGenerating combined analysis figure...")
 fig4 = plt.figure(figsize=(20, 11))
 fig4.patch.set_facecolor('white')
 gs = fig4.add_gridspec(
-    2, 3, hspace=0.35, wspace=0.35,
+    2,
+    3,
+    width_ratios=[2, 1.5, 1.5], # 40%, 30 + 30 = 60%
+    hspace=0.35,
+    wspace=0.35,
     top=0.93, bottom=0.06, left=0.06, right=0.97
 )
 
