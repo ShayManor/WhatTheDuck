@@ -88,18 +88,22 @@ num_samples_list, var_results, errors = zip(*[(r.num_samples, r.var_estimate, r.
 
 # Calculate reference lines
 scaled_errors = np.array(errors) * np.sqrt(np.array(num_samples_list))
-witness_top_n = np.percentile(scaled_errors, 95) 
-witness_bottom_n = np.percentile(scaled_errors, 5)
-ref_line_top_n = witness_top_n / np.sqrt(num_samples_list)
-ref_line_bottom_n = witness_bottom_n / np.sqrt(num_samples_list)
+witness_n = np.median(scaled_errors)
+ref_line_n = witness_n / np.sqrt(num_samples_list)
+# witness_top_n = np.percentile(scaled_errors, 95) 
+# witness_bottom_n = np.percentile(scaled_errors, 5)
+# ref_line_top_n = witness_top_n / np.sqrt(num_samples_list)
+# ref_line_bottom_n = witness_bottom_n / np.sqrt(num_samples_list)
 
 inv_error_sq = 1 / np.array(errors)**2
 num_samples_array = np.array(num_samples_list)
 scaled_samples = num_samples_array / inv_error_sq
-witness_top_e2 = np.percentile(scaled_samples, 95)
-witness_bottom_e2 = np.percentile(scaled_samples, 5)
-ref_line_top_e2 = witness_top_e2 * inv_error_sq
-ref_line_bottom_e2 = witness_bottom_e2 * inv_error_sq
+witness_e2 = np.median(scaled_samples)
+# witness_top_e2 = np.percentile(scaled_samples, 95)
+# witness_bottom_e2 = np.percentile(scaled_samples, 5)
+# ref_line_top_e2 = witness_top_e2 * inv_error_sq
+# ref_line_bottom_e2 = witness_bottom_e2 * inv_error_sq
+ref_line_e2 = witness_e2 * inv_error_sq
 
 # Create professional visualizations ------------------------------------------#
 
@@ -158,16 +162,16 @@ ax2.plot(num_samples_list, errors,
          label='Absolute Error', zorder=4)
 
 # Reference lines with improved styling
-ax2.plot(num_samples_list, ref_line_top_n, 
+ax2.plot(num_samples_list, ref_line_n,
          color=COLOR_BOUND_UPPER, linestyle='--', linewidth=2, alpha=0.7,
-         label=r'$\mathcal{O}(N^{-1/2})$ Upper Bound', zorder=3)
-ax2.plot(num_samples_list, ref_line_bottom_n, 
-         color=COLOR_BOUND_LOWER, linestyle='-.', linewidth=2, alpha=0.7,
-         label=r'$\Omega(N^{-1/2})$ Lower Bound', zorder=3)
+         label=r'$\mathcal{O}(N^{-1/2})$', zorder=3)
+# ax2.plot(num_samples_list, ref_line_bottom_n, 
+#          color=COLOR_BOUND_LOWER, linestyle='-.', linewidth=2, alpha=0.7,
+#          label=r'$\Omega(N^{-1/2})$ Lower Bound', zorder=3)
 
 # Fill between bounds for visual clarity
-ax2.fill_between(num_samples_list, ref_line_bottom_n, ref_line_top_n,
-                  alpha=0.1, color=COLOR_PRIMARY, zorder=1)
+# ax2.fill_between(num_samples_list, ref_line_bottom_n, ref_line_top_n,
+#                   alpha=0.1, color=COLOR_PRIMARY, zorder=1)
 
 # Enhanced grid
 ax2.grid(True, which='major', linestyle='-', alpha=0.3, color=COLOR_GRID, zorder=2)
@@ -220,16 +224,16 @@ ax3.plot(inv_error_sq, num_samples_list,
          label='Observed Samples vs $\\varepsilon^{-2}$', zorder=4)
 
 # Reference lines
-ax3.plot(inv_error_sq, ref_line_top_e2, 
+ax3.plot(inv_error_sq, ref_line_e2, 
          color=COLOR_BOUND_UPPER, linestyle='--', linewidth=2, alpha=0.7,
-         label=r'$\mathcal{O}(\varepsilon^{-2})$ Upper Bound', zorder=3)
-ax3.plot(inv_error_sq, ref_line_bottom_e2, 
-         color=COLOR_BOUND_LOWER, linestyle='-.', linewidth=2, alpha=0.7,
-         label=r'$\Omega(\varepsilon^{-2})$ Lower Bound', zorder=3)
+         label=r'$\mathcal{O}(\varepsilon^{-2})$', zorder=3)
+# ax3.plot(inv_error_sq, ref_line_bottom_e2, 
+#          color=COLOR_BOUND_LOWER, linestyle='-.', linewidth=2, alpha=0.7,
+#          label=r'$\Omega(\varepsilon^{-2})$ Lower Bound', zorder=3)
 
 # Fill between bounds
-ax3.fill_between(inv_error_sq, ref_line_bottom_e2, ref_line_top_e2,
-                  alpha=0.1, color=COLOR_PRIMARY, zorder=1)
+# ax3.fill_between(inv_error_sq, ref_line_bottom_e2, ref_line_top_e2,
+#                   alpha=0.1, color=COLOR_PRIMARY, zorder=1)
 
 # Enhanced grid
 ax3.grid(True, which='major', linestyle='-', alpha=0.3, color=COLOR_GRID, zorder=2)
