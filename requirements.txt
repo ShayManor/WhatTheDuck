@@ -1,0 +1,5 @@
+classiq
+jupyter
+matplotlib
+scipy
+numpy
