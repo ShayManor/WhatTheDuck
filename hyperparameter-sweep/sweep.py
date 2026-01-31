@@ -22,16 +22,138 @@ class TailQuery:
     index: Optional[int] = None
     grid_points: Optional[np.ndarray] = None
 
-def get_log_normal_probabilities(mu_normal, sigma_normal, num_points):
-    mean = np.exp(mu_normal + sigma_normal ** 2 / 2)
-    var = (np.exp(sigma_normal ** 2) - 1) * np.exp(2 * mu_normal + sigma_normal ** 2)
+
+def get_log_normal_probabilities(mu, sigma, num_points):
+    """Existing log-normal implementation."""
+    mean = np.exp(mu + sigma ** 2 / 2)
+    var = (np.exp(sigma ** 2) - 1) * np.exp(2 * mu + sigma ** 2)
     std = np.sqrt(var)
     low = max(0.0, mean - 3 * std)
     high = mean + 3 * std
     x = np.linspace(low, high, num_points)
-    pdf = st.lognorm.pdf(x, s=sigma_normal, scale=np.exp(mu_normal))
+    pdf = st.lognorm.pdf(x, s=sigma, scale=np.exp(mu))
     p = pdf / np.sum(pdf)
     return x, p
+
+
+def get_normal_probabilities(mu, sigma, num_points):
+    """Discretized Gaussian."""
+    low = mu - 4 * sigma
+    high = mu + 4 * sigma
+    x = np.linspace(low, high, num_points)
+    pdf = st.norm.pdf(x, loc=mu, scale=sigma)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+
+def get_exponential_probabilities(lam, num_points):
+    """Discretized exponential with rate lambda."""
+    mean = 1.0 / lam
+    high = mean + 5 * mean  # covers ~99.3%
+    x = np.linspace(0.0, high, num_points)
+    pdf = st.expon.pdf(x, scale=1.0 / lam)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+
+def get_pareto_probabilities(alpha_shape, x_m, num_points):
+    """Discretized Pareto (heavy tail). alpha_shape=shape, x_m=scale."""
+    # Pareto has infinite mean for alpha<=1, cap at 99th percentile
+    high = st.pareto.ppf(0.99, b=alpha_shape, scale=x_m)
+    x = np.linspace(x_m, high, num_points)
+    pdf = st.pareto.pdf(x, b=alpha_shape, scale=x_m)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+
+def get_mixture_probabilities(num_points):
+    """Gaussian mixture: 80% N(1, 0.2) + 20% N(3, 0.5) — bimodal."""
+    x = np.linspace(-1, 5, num_points)
+    pdf = 0.8 * st.norm.pdf(x, loc=1, scale=0.2) + 0.2 * st.norm.pdf(x, loc=3, scale=0.5)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+
+def get_beta_probabilities(a, b, num_points):
+    """Discretized Beta(a, b) on [0, 1]."""
+    x = np.linspace(1e-6, 1 - 1e-6, num_points)
+    pdf = st.beta.pdf(x, a, b)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+def get_student_t_probabilities(df, loc, scale, num_points):
+    """Discretized Student's t with df degrees of freedom."""
+    # Use PPF to get reasonable bounds (heavy tails need wider range)
+    low = st.t.ppf(0.001, df, loc=loc, scale=scale)
+    high = st.t.ppf(0.999, df, loc=loc, scale=scale)
+    x = np.linspace(low, high, num_points)
+    pdf = st.t.pdf(x, df, loc=loc, scale=scale)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+
+def get_skew_normal_probabilities(alpha_skew, loc, scale, num_points):
+    """Discretized skew-normal. alpha_skew>0 = right skew, <0 = left skew."""
+    low = st.skewnorm.ppf(0.001, alpha_skew, loc=loc, scale=scale)
+    high = st.skewnorm.ppf(0.999, alpha_skew, loc=loc, scale=scale)
+    x = np.linspace(low, high, num_points)
+    pdf = st.skewnorm.pdf(x, alpha_skew, loc=loc, scale=scale)
+    p = pdf / np.sum(pdf)
+    return x, p
+
+
+def get_distribution(dist_name, num_points, **kwargs):
+    """
+    Factory function for distributions.
+    Returns (grid_points, probabilities).
+    """
+    if dist_name == "lognormal":
+        return get_log_normal_probabilities(
+            kwargs.get("mu", 0.7),
+            kwargs.get("sigma", 0.13),
+            num_points
+        )
+    elif dist_name == "normal":
+        return get_normal_probabilities(
+            kwargs.get("mu", 0.0),
+            kwargs.get("sigma", 1.0),
+            num_points
+        )
+    elif dist_name == "exponential":
+        return get_exponential_probabilities(
+            kwargs.get("lam", 1.0),
+            num_points
+        )
+    elif dist_name == "pareto":
+        return get_pareto_probabilities(
+            kwargs.get("shape", 2.5),
+            kwargs.get("scale", 1.0),
+            num_points
+        )
+    elif dist_name == "mixture":
+        return get_mixture_probabilities(num_points)
+    elif dist_name == "beta":
+        return get_beta_probabilities(
+            kwargs.get("a", 2.0),
+            kwargs.get("b", 5.0),
+            num_points
+        )
+    elif dist_name == "student_t":
+        return get_student_t_probabilities(
+            kwargs.get("df", 3.0),
+            kwargs.get("loc", 0.0),
+            kwargs.get("scale", 1.0),
+            num_points
+        )
+    elif dist_name == "skew_normal":
+        return get_skew_normal_probabilities(
+            kwargs.get("skew", 4.0),
+            kwargs.get("loc", 0.0),
+            kwargs.get("scale", 1.0),
+            num_points
+        )
+    else:
+        raise ValueError(f"Unknown distribution: {dist_name}")
 
 
 def wilson_ci(k: int, n: int, confidence: float):
@@ -222,14 +344,14 @@ class ClassicalDiscreteMC:
         return strata if strata else [(0, self._p.size, 1.0)]
 
     def _draw_u(
-        self,
-        *,
-        rng: np.random.Generator,
-        m: int,
-        base: int,
-        qmc: bool,
-        scramble_seed: Optional[int],
-        qmc_counters: Dict[int, int],
+            self,
+            *,
+            rng: np.random.Generator,
+            m: int,
+            base: int,
+            qmc: bool,
+            scramble_seed: Optional[int],
+            qmc_counters: Dict[int, int],
     ) -> np.ndarray:
         if m <= 0:
             return np.empty((0,), dtype=float)
@@ -243,17 +365,17 @@ class ClassicalDiscreteMC:
         return u
 
     def _draw_indices_batch(
-        self,
-        *,
-        rng: np.random.Generator,
-        n: int,
-        method: str,
-        tilt_tau: float,
-        qmc: bool,
-        scramble_seed: Optional[int],
-        strata: int,
-        pilot: int,
-        qmc_counters: Dict[int, int],
+            self,
+            *,
+            rng: np.random.Generator,
+            n: int,
+            method: str,
+            tilt_tau: float,
+            qmc: bool,
+            scramble_seed: Optional[int],
+            strata: int,
+            pilot: int,
+            qmc_counters: Dict[int, int],
     ) -> tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
         n = int(n)
         if n <= 0:
@@ -339,13 +461,13 @@ class ClassicalDiscreteMC:
         return idx, w, meta
 
     def _estimate_from_samples(
-        self,
-        *,
-        idx: np.ndarray,
-        w: np.ndarray,
-        index_thr: int,
-        confidence: float,
-        use_cv: bool,
+            self,
+            *,
+            idx: np.ndarray,
+            w: np.ndarray,
+            index_thr: int,
+            confidence: float,
+            use_cv: bool,
     ) -> tuple[float, float, float, float, Dict[str, Any]]:
         n = int(idx.size)
         if n <= 0:
@@ -392,13 +514,13 @@ class ClassicalDiscreteMC:
         return phat, float(ci_low), float(ci_high), float(successes_eff), cv_meta
 
     def estimate_tail_prob(
-        self,
-        query: TailQuery,
-        *,
-        budget: int,
-        confidence: float = 0.99,
-        seed: Optional[int] = None,
-        **kwargs: Any,
+            self,
+            query: TailQuery,
+            *,
+            budget: int,
+            confidence: float = 0.99,
+            seed: Optional[int] = None,
+            **kwargs: Any,
     ) -> ProbEstimate:
         index_thr = _get_index_threshold(query)
 
@@ -428,14 +550,14 @@ class ClassicalDiscreteMC:
         cache_key = None
 
         use_fast_path = (
-            method == "plain"
-            and not qmc
-            and float(tilt_tau) == 0.0
-            and int(strata) <= 1
-            and not use_cv
-            and reuse_id is None
-            and target_prob is None
-            and ci_width_tol is None
+                method == "plain"
+                and not qmc
+                and float(tilt_tau) == 0.0
+                and int(strata) <= 1
+                and not use_cv
+                and reuse_id is None
+                and target_prob is None
+                and ci_width_tol is None
         )
         if use_fast_path:
             if self.torch is not None and self.device == "cuda":
@@ -468,16 +590,16 @@ class ClassicalDiscreteMC:
             )
 
         use_cuda_is_path = (
-            method == "is"
-            and self.torch is not None
-            and self.device == "cuda"
-            and not qmc
-            and float(tilt_tau) > 0.0
-            and int(strata) <= 1
-            and not use_cv
-            and reuse_id is None
-            and target_prob is None
-            and ci_width_tol is None
+                method == "is"
+                and self.torch is not None
+                and self.device == "cuda"
+                and not qmc
+                and float(tilt_tau) > 0.0
+                and int(strata) <= 1
+                and not use_cv
+                and reuse_id is None
+                and target_prob is None
+                and ci_width_tol is None
         )
         if use_cuda_is_path:
             g = self.torch.Generator(device=self.device)
@@ -655,6 +777,19 @@ def main():
     ap.add_argument("--max-steps", type=int, default=64)
     ap.add_argument("--tau", type=float, default=0.0)  # VaR abs error tolerance; 0 means pure cost-min
     ap.add_argument("--out", type=str, default="best.json")
+    ap.add_argument("--dist", type=str, default="lognormal",
+                    choices=["lognormal", "normal", "exponential", "pareto", "mixture", "beta"],
+                    help="Distribution type")
+    ap.add_argument("--mu", type=float, default=0.7)
+    ap.add_argument("--sigma", type=float, default=0.13)
+    ap.add_argument("--lam", type=float, default=1.0, help="Exponential rate")
+    ap.add_argument("--shape", type=float, default=2.5, help="Pareto shape")
+    ap.add_argument("--scale", type=float, default=1.0, help="Pareto scale")
+    ap.add_argument("--beta-a", type=float, default=2.0)
+    ap.add_argument("--beta-b", type=float, default=5.0)
+    ap.add_argument("--df", type=float, default=3.0, help="Student-t degrees of freedom")
+    ap.add_argument("--skew", type=float, default=4.0, help="Skew-normal skewness parameter")
+    ap.add_argument("--loc", type=float, default=0.0, help="Location parameter")
     args = ap.parse_args()
 
     if args.log_in:
@@ -664,7 +799,17 @@ def main():
     if args.classical == args.quantum:
         raise SystemExit("Pick exactly one: --classical or --quantum")
 
-    grid_points, probs = get_log_normal_probabilities(args.mu, args.sigma, 2 ** args.num_qubits)
+    grid_points, probs = get_distribution(
+        args.dist,
+        2 ** args.num_qubits,
+        mu=args.mu,
+        sigma=args.sigma,
+        lam=args.lam,
+        shape=args.shape,
+        scale=args.scale,
+        a=args.beta_a,
+        b=args.beta_b,
+    )
     cdf = np.cumsum(probs)
     ref_idx = int(np.searchsorted(cdf, args.alpha, side="left"))
     ref_var = float(grid_points[ref_idx])
@@ -673,59 +818,109 @@ def main():
 
     # Estimator selection
     if args.classical:
-        est = ClassicalDiscreteMC(probs)
+        # Define test suite of distributions with varying tail behavior
+        TEST_DISTRIBUTIONS = [
+            {"dist": "lognormal", "mu": 0.7, "sigma": 0.13},
+            {"dist": "normal", "mu": 0.0, "sigma": 1.0},
+            {"dist": "exponential", "lam": 1.0},
+            {"dist": "pareto", "shape": 2.5, "scale": 1.0},
+            {"dist": "student_t", "df": 3.0, "loc": 0.0, "scale": 1.0},
+            {"dist": "skew_normal", "skew": 4.0, "loc": 0.0, "scale": 1.0},
+            {"dist": "beta", "a": 2.0, "b": 5.0},
+            {"dist": "mixture"},
+        ]
 
-        def estimator(q: TailQuery, **kw):
-            return est.estimate_tail_prob(q, **kw)
+        # Precompute all distributions
+        dist_data = []
+        for d in TEST_DISTRIBUTIONS:
+            gp, pr = get_distribution(
+                d["dist"],
+                2 ** args.num_qubits,
+                mu=d.get("mu", 0.0),
+                sigma=d.get("sigma", 1.0),
+                lam=d.get("lam", 1.0),
+                shape=d.get("shape", 2.5),
+                scale=d.get("scale", 1.0),
+                a=d.get("a", 2.0),
+                b=d.get("b", 5.0),
+                df=d.get("df", 3.0),
+                skew=d.get("skew", 4.0),
+                loc=d.get("loc", 0.0),
+            )
+            cdf = np.cumsum(pr)
+            ref_idx = int(np.searchsorted(cdf, args.alpha, side="left"))
+            ref_var = float(gp[ref_idx])
+            dist_data.append({
+                "name": d["dist"],
+                "grid": gp,
+                "probs": pr,
+                "ref_idx": ref_idx,
+                "ref_var": ref_var,
+                "estimator": ClassicalDiscreteMC(pr),
+            })
 
-        sampler = optuna.samplers.TPESampler(seed=args.seed)  # Bayesian TPE
-        pruner = optuna.pruners.MedianPruner(n_startup_trials=8)
+        sampler = optuna.samplers.TPESampler(seed=args.seed)
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=20)
 
         def objective(trial: optuna.Trial):
             budget = trial.suggest_int("budget", 500, 50_000, log=True)
             conf = trial.suggest_float("confidence", 0.90, 0.999)
 
-            # Variance reduction method selection
             method = trial.suggest_categorical("method", [
                 "plain", "is", "stratified", "qmc",
                 "is_stratified", "is_qmc", "is_stratified_qmc"
             ])
 
-            # IS tilting (only matters for IS methods)
             tilt_tau = trial.suggest_float("tilt_tau", 0.01, 2.0) if "is" in method else 0.0
-
-            # Stratification (only matters for stratified methods)
             strata = trial.suggest_int("strata", 4, 64) if "stratified" in method else 1
-
-            # Control variate
             use_cv = trial.suggest_categorical("use_control_variate", [True, False])
 
-            var, vidx, cost, _ = solve_var_bisect(
-                estimator,
-                alpha_target=args.alpha,
-                tail_mode="pnl_leq",
-                grid_points=grid_points,
-                lo_index=0,
-                hi_index=len(grid_points) - 1,
-                prob_tol=prob_tol,
-                value_tol=args.value_tol,
-                max_steps=args.max_steps,
-                est_params={
-                    "budget": budget,
-                    "confidence": conf,
-                    "seed": args.seed + trial.number,
-                    "method": method,
-                    "tilt_tau": tilt_tau,
-                    "strata": strata,
-                    "use_control_variate": use_cv,
-                },
-            )
-            err = abs(var - ref_var)
-            trial.report(err, step=0)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-            return cost + (1e9 * max(0.0, err - args.tau)) if args.tau > 0 else cost + 1e6 * err
+            total_cost = 0.0
+            total_err = 0.0
+            max_err = 0.0
 
+            for i, dd in enumerate(dist_data):
+                def estimator(q: TailQuery, **kw):
+                    return dd["estimator"].estimate_tail_prob(q, **kw)
+
+                var, vidx, cost, _ = solve_var_bisect(
+                    estimator,
+                    alpha_target=args.alpha,
+                    tail_mode="pnl_leq",
+                    grid_points=dd["grid"],
+                    lo_index=0,
+                    hi_index=len(dd["grid"]) - 1,
+                    prob_tol=prob_tol,
+                    value_tol=args.value_tol,
+                    max_steps=args.max_steps,
+                    est_params={
+                        "budget": budget,
+                        "confidence": conf,
+                        "seed": args.seed + trial.number * 100 + i,
+                        "method": method,
+                        "tilt_tau": tilt_tau,
+                        "strata": strata,
+                        "use_control_variate": use_cv,
+                    },
+                )
+
+                # Normalize error by ref_var to make comparable across distributions
+                err = abs(var - dd["ref_var"]) / (abs(dd["ref_var"]) + 1e-9)
+                total_cost += cost
+                total_err += err
+                max_err = max(max_err, err)
+
+                # Early pruning on running average
+                trial.report(total_cost / (i + 1), step=i)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
+            avg_cost = total_cost / len(dist_data)
+            avg_err = total_err / len(dist_data)
+
+            # Objective: minimize average cost + penalty for error
+            # Use max_err to penalize configs that fail badly on any distribution
+            return avg_cost + 1e6 * avg_err + 1e5 * max_err
     else:
 
         est = QuantumIQAECDF(probs, num_qubits=args.num_qubits)
@@ -737,6 +932,7 @@ def main():
                 f.write(qasm)
             print(f"Saved circuit.qasm for threshold_index={ref_idx}")
             return
+
         # with open("circuit.qasm") as f:
         #     qasm = f.read()
 
@@ -779,13 +975,13 @@ def main():
     study.optimize(objective, n_trials=args.trials)
 
     best = {
-        "mode": "classical" if args.classical else "quantum",
+        "mode": "classical_robust",
         "best_value": study.best_value,
         "best_params": study.best_params,
-        "ref_var": ref_var,
-        "ref_idx": ref_idx,
-        "num_qubits": args.num_qubits,
+        "num_distributions": len(dist_data),
+        "distributions": [d["name"] for d in dist_data],
         "alpha": args.alpha,
+        "num_qubits": args.num_qubits,
     }
     print(json.dumps(best, indent=2))
 
