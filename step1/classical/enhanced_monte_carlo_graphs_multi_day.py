@@ -142,8 +142,8 @@ def monte_carlo_var(
     
     # Aggregate multi-day returns and compute VaR
     total_returns = daily_returns.sum(axis=1)
-    losses = -total_returns
-    var_estimate = np.quantile(losses, confidence_level)
+    # losses = -total_returns
+    var_estimate = np.quantile(total_returns, 1 - confidence_level)
     error = abs(var_estimate - theoretical_var)
     
     return MonteCarloResult(N, var_estimate, error)
@@ -306,8 +306,8 @@ if rho != 0.0 and T > 1:
     daily_returns = correlated_returns
 
 total_returns = daily_returns.sum(axis=1)
-losses = -total_returns
-var_for_plot = np.quantile(losses, confidence_level)
+# losses = -total_returns
+var_for_plot = np.quantile(total_returns, 1 - confidence_level)
 
 # Create distribution figure
 fig_dist, ax_dist = plt.subplots(figsize=(10, 6))
@@ -322,12 +322,12 @@ counts, bins, patches = ax_dist.hist(
 
 # VaR line
 ax_dist.axvline(
-    x=-var_for_plot, color=COLOR_DANGER, linestyle='--',
+    x=var_for_plot, color=COLOR_DANGER, linestyle='--',
     linewidth=2.5, alpha=0.9, label=f'VaR at {int(confidence_level*100)}%', zorder=5
 )
 
 # Shade VaR tail
-var_mask = bins[:-1] <= -var_for_plot
+var_mask = bins[:-1] <= var_for_plot
 if np.any(var_mask):
     for i, (patch, is_tail) in enumerate(zip(patches, var_mask)):
         if is_tail:
@@ -544,12 +544,12 @@ counts, bins, patches = ax_a.hist(
     density=True, edgecolor='white', linewidth=0.5
 )
 ax_a.axvline(
-    x=-var_for_plot, color=COLOR_DANGER,
+    x=var_for_plot, color=COLOR_DANGER,
     linestyle='--', linewidth=2.5, alpha=0.9, zorder=5
 )
 
 # Shade tail
-var_mask = bins[:-1] <= -var_for_plot
+var_mask = bins[:-1] <= var_for_plot
 for patch, is_tail in zip(patches, var_mask):
     if is_tail:
         patch.set_facecolor(COLOR_DANGER)
