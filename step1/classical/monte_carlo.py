@@ -7,8 +7,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # Parameters ------------------------------------------------------------------#
 # np.random.seed(42)  # reproducibility
 
-mu = 0.7      # mean daily return (0.1%)
-sigma = 0.13  # daily volatility (2%)
+mu = 0.15      # mean daily return (0.1%)
+sigma = 0.20   # daily volatility (2%)
 confidence_level = 0.95
 # num_samples_list = [n for n in range(10, 10**8 + 1, 100)]
 num_samples_max = 10**8
