@@ -997,3 +997,27 @@ def main():
 
 if __name__ == "__main__":
     main()
+# {
+#   "mode": "classical_robust",
+#   "best_value": 13884.984625977311,
+#   "best_params": {
+#     "budget": 502,
+#     "confidence": 0.9790934333417373,
+#     "method": "is_qmc",
+#     "tilt_tau": 0.11372799886830216,
+#     "use_control_variate": false
+#   },
+#   "num_distributions": 8,
+#   "distributions": [
+#     "lognormal",
+#     "normal",
+#     "exponential",
+#     "pareto",
+#     "student_t",
+#     "skew_normal",
+#     "beta",
+#     "mixture"
+#   ],
+#   "alpha": 0.05,
+#   "num_qubits": 7
+# }
