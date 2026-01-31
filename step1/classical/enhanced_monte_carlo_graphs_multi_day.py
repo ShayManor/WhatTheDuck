@@ -54,16 +54,17 @@ sigma = 0.20                   # Daily volatility (20%)
 confidence_level = 0.95        # VaR confidence level
 
 # Multi-day and distribution settings
-T = 2                          # Number of days for multi-day VaR
+T = 5                          # Number of days for multi-day VaR
 dist = "skewnorm"              # Distribution: "gaussian", "student-t", "skewnorm"
 df = 3                         # Degrees of freedom for Student-t
-skew_alpha = 5.0               # Skew parameter for skew-normal
-rho = 0.3                      # AR(1) correlation coefficient
+skew_alpha = 7.0               # Skew parameter for skew-normal
+rho = 0.6                      # AR(1) correlation coefficient
 
 # Simulation settings
 num_samples_max = 10**7        # Maximum samples
 num_samples_count = 250        # Number of sample sizes to test
 theoretical_N = num_samples_max * 2 # Samples for theoretical VaR estimation
+theoretical_estimations = 10        # Averaging runs for theoretical VaR
 CPU_WORKERS = 10               # Parallel workers
 
 # Generate logarithmically spaced sample sizes
@@ -199,12 +200,16 @@ print(f"  • Correlation (ρ):          {rho:.2f}")
 print(f"  • Sample range:             {num_samples_list[0]:,} to {num_samples_list[-1]:,}")
 print("\n" + "="*70)
 
-# Estimate theoretical VaR using large N
-print(f"\nEstimating theoretical VaR with N={theoretical_N:,}...")
-theoretical_mc = monte_carlo_var(
-    theoretical_N, mu, sigma, confidence_level, 0.0, T, dist, df, skew_alpha, rho
-)
-theoretical_var = theoretical_mc.var_estimate
+# Estimate theoretical VaR using large N and multiple runs
+print(f"\nEstimating theoretical VaR with N={theoretical_N:,} over {theoretical_estimations} runs...")
+theoretical_vars = []
+for i in range(theoretical_estimations):
+    mc_run = monte_carlo_var(
+        theoretical_N, mu, sigma, confidence_level, 0.0, T, dist, df, skew_alpha, rho
+    )
+    theoretical_vars.append(mc_run.var_estimate)
+    print(f"  Run {i+1}/{theoretical_estimations}: VaR = {mc_run.var_estimate:.5f}")
+theoretical_var = float(np.mean(theoretical_vars))
 print(f"Theoretical VaR ({int(confidence_level*100)}%): {theoretical_var:.5f}")
 
 # Run parallel simulations
