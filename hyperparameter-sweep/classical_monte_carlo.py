@@ -9,10 +9,10 @@ def estimate_var_classical(
         alpha: float = 0.05,
         seed: int = 42,
         # Best hyperparameters from sweep
-        budget: int = 502,
-        confidence: float = 0.979,
+        budget: int = 500,
+        confidence: float = 0.9902103982255026,
         method: str = "is_qmc",
-        tilt_tau: float = 0.114,
+        tilt_tau: float = 0.1154157949440764,
         use_control_variate: bool = False,
         prob_tol: float = None,
         max_steps: int = 64,
