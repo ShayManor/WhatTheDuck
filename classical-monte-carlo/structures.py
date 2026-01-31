@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, Callable
 
 import numpy as np
 
@@ -77,3 +77,36 @@ class QuantumProbEstimator:
           - record enough meta to audit accounting (shots, Grover powers, etc.)
         """
         ...
+
+
+@dataclass(frozen=True)
+class VarResult:
+    var_value: float
+    var_index: Optional[int]
+    ci_low: float  # CI for VaR value (derived from probability CI + bracket)
+    ci_high: float
+    total_cost: int
+    steps: int
+    meta: Dict[str, Any]
+
+
+def solve_var(
+        estimator: Callable[..., ProbEstimate],
+        *,
+        alpha_target: float,
+        tail_mode: TailMode,
+        grid_points: np.ndarray,
+        # bracket over index space
+        lo_index: int,
+        hi_index: int,
+        # stopping
+        value_tol: float,  # tolerance in asset-value units
+        prob_tol: float,  # optional tolerance in probability space
+        max_steps: int = 64,
+        # estimator parameters forwarded (budget or epsilon/alpha)
+        estimator_params: Dict[str, Any],
+) -> VarResult:
+    """
+    CI-driven bisection (or other bracketing) to find VaR threshold/index.
+    """
+    ...
