@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Literal
 import numpy as np
 import optuna
 import scipy.stats as st
-from classiq import synthesize
 
 from quantum_estimator import QuantumIQAECDF, ProbEstimate
 from classiq_to_cuda import synthesize_to_qasm, qasm_to_cudaq, classiq_to_qasm
@@ -719,7 +718,7 @@ def main():
         #     qasm = f.read()
 
         # Convert to CUDA-Q kernel (works offline)
-        kernel = qasm_to_cudaq(qasm)
+        # kernel = qasm_to_cudaq(qasm)
 
         # Run with CUDA-Q
         import cudaq
