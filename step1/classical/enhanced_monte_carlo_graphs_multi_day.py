@@ -211,6 +211,9 @@ for i in range(theoretical_estimations):
     print(f"  Run {i+1}/{theoretical_estimations}: VaR = {mc_run.var_estimate:.5f}")
 theoretical_var = float(np.mean(theoretical_vars))
 print(f"Theoretical VaR ({int(confidence_level*100)}%): {theoretical_var:.5f}")
+# This does two critical things:
+# It removes modeling error from the convergence study
+# It isolates probability estimation error only
 
 # Run parallel simulations
 print(f"\nRunning {len(num_samples_list)} simulations in parallel...")
