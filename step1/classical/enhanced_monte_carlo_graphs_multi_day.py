@@ -60,6 +60,9 @@ df = 3                         # Degrees of freedom for Student-t
 skew_alpha = 7.0               # Skew parameter for skew-normal
 rho = 0.6                      # AR(1) correlation coefficient
 
+# Where modeling error is intentionally held fixed
+# You do not mix models during convergence plots.
+
 # Simulation settings
 num_samples_max = 10**7        # Maximum samples
 num_samples_count = 250        # Number of sample sizes to test
