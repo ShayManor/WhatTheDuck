@@ -524,9 +524,9 @@ gs = fig4.add_gridspec(
     2,
     3,
     width_ratios=[2, 1.5, 1.5], # 40%, 30 + 30 = 60%
-    hspace=0.35,
-    wspace=0.35,
-    top=0.93, bottom=0.06, left=0.06, right=0.97
+    hspace=0.15,
+    wspace=0.15,
+    top=0.97, bottom=0.03, left=0.03, right=0.97
 )
 
 fig4.suptitle(
