@@ -85,45 +85,558 @@ def solve_var_bisect(
     return float(grid_points[var_index]), int(var_index), int(total_cost), trace
 
 
-# Classical GPU estimator (Monte Carlo on discrete probs)
+# Classical estimator (advanced discrete Monte Carlo)
+
+
+def _validate_pmf(probs: np.ndarray) -> np.ndarray:
+    p = np.array(probs, dtype=float).copy()
+    if p.ndim != 1 or p.size == 0:
+        raise ValueError("probs must be a non-empty 1D array")
+    if np.any(p < 0):
+        raise ValueError("probs must be non-negative")
+    s = float(np.sum(p))
+    if s <= 0:
+        raise ValueError("probs must sum to > 0")
+    p /= s
+    return p
+
+
+def _cdf_from_pmf(p: np.ndarray) -> np.ndarray:
+    c = np.cumsum(p)
+    c[-1] = 1.0
+    return c
+
+
+def _inverse_cdf_sample(u: np.ndarray, cdf: np.ndarray) -> np.ndarray:
+    return np.searchsorted(cdf, u, side="left").astype(int)
+
+
+def _halton_range(start_index_1based: int, n: int, base: int, scramble_seed: Optional[int]) -> np.ndarray:
+    if n <= 0:
+        return np.empty((0,), dtype=float)
+    if start_index_1based <= 0:
+        raise ValueError("start_index_1based must be >= 1")
+
+    perm = None
+    if scramble_seed is not None:
+        rng = np.random.default_rng(scramble_seed)
+        perm = np.arange(base, dtype=int)
+        rng.shuffle(perm)
+
+    out = np.zeros(n, dtype=float)
+    for j in range(n):
+        x = start_index_1based + j
+        f = 1.0
+        r = 0.0
+        while x > 0:
+            f /= base
+            digit = x % base
+            if perm is not None:
+                digit = int(perm[digit])
+            r += f * digit
+            x //= base
+        out[j] = r
+    return out
+
+
+def _get_index_threshold(query: TailQuery) -> int:
+    if getattr(query, "index", None) is None:
+        raise ValueError("Estimator expects TailQuery.index for discrete CDF queries.")
+    return int(query.index)
+
+
+def _wilson_ci(k: int, n: int, confidence: float) -> tuple[float, float]:
+    return wilson_ci(k, n, confidence)
+
+
+@dataclass(frozen=True)
+class _CacheKey:
+    reuse_id: str
+    seed: Optional[int]
+    method: str
+    tilt_tau: float
+    qmc: bool
+    scramble_seed: Optional[int]
+    strata: int
+    pilot: int
+
 
 class ClassicalDiscreteMC:
+    """
+    Advanced discrete Monte Carlo estimator with:
+      - IS (exponential tilting), stratification, QMC, control variates
+      - Option B caching: cached sample set grows to satisfy larger budgets safely
+      - cost returned is NEW samples generated in the call
+
+    Tail event is P(bin < query.index).
+    """
+
     def __init__(self, probs: np.ndarray):
-        self.p = probs.astype(np.float64)
-        self.K = len(self.p)
+        self._p = _validate_pmf(np.array(probs, dtype=float))
+        self._support = np.arange(self._p.size, dtype=int)
+        self._cdf_p = _cdf_from_pmf(self._p)
+        self._EX_index = float(np.sum(self._support * self._p))
+        self._cache: Dict[_CacheKey, Dict[str, Any]] = {}
+
         try:
             import torch
             self.torch = torch
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.p_t = torch.tensor(self.p, device=self.device, dtype=torch.float32)
+            if self.device == "cuda":
+                self.p_t = torch.tensor(self._p, device=self.device, dtype=torch.float32)
+                self.support_t = torch.arange(self._p.size, device=self.device, dtype=torch.long)
+            else:
+                self.p_t = None
+                self.support_t = None
         except Exception:
             self.torch = None
             self.device = "cpu"
             self.p_t = None
+            self.support_t = None
 
-    def estimate_tail_prob(self, query: TailQuery, *, budget: int, confidence: float = 0.99, seed: Optional[int] = None,
-                           **_):
-        if query.index is None:
-            raise ValueError("query.index required")
-        n = int(budget)
-        idx = int(query.index)
+    def _proposal_from_tilt(self, tau: float) -> np.ndarray:
+        tau = float(tau)
+        if tau < 0:
+            raise ValueError("tilt_tau must be >= 0")
+        logw = -tau * self._support.astype(float)
+        q_unnorm = self._p * np.exp(logw - np.max(logw))
+        return _validate_pmf(q_unnorm)
 
-        if self.torch is not None:
+    def _make_strata(self, num_strata: int) -> list[tuple[int, int, float]]:
+        k = int(num_strata)
+        if k <= 1:
+            return [(0, self._p.size, 1.0)]
+
+        edges = [0]
+        targets = [(j / k) for j in range(1, k)]
+        for t in targets:
+            idx = int(np.searchsorted(self._cdf_p, t, side="left"))
+            edges.append(idx)
+        edges.append(self._p.size)
+
+        strata = []
+        for a, b in zip(edges[:-1], edges[1:]):
+            if b <= a:
+                continue
+            mass = float(np.sum(self._p[a:b]))
+            strata.append((a, b, mass))
+        return strata if strata else [(0, self._p.size, 1.0)]
+
+    def _draw_u(
+        self,
+        *,
+        rng: np.random.Generator,
+        m: int,
+        base: int,
+        qmc: bool,
+        scramble_seed: Optional[int],
+        qmc_counters: Dict[int, int],
+    ) -> np.ndarray:
+        if m <= 0:
+            return np.empty((0,), dtype=float)
+        if not qmc:
+            return rng.random(m)
+
+        used = int(qmc_counters.get(base, 0))
+        start = used + 1
+        u = _halton_range(start, m, base=base, scramble_seed=scramble_seed)
+        qmc_counters[base] = used + m
+        return u
+
+    def _draw_indices_batch(
+        self,
+        *,
+        rng: np.random.Generator,
+        n: int,
+        method: str,
+        tilt_tau: float,
+        qmc: bool,
+        scramble_seed: Optional[int],
+        strata: int,
+        pilot: int,
+        qmc_counters: Dict[int, int],
+    ) -> tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+        n = int(n)
+        if n <= 0:
+            return np.empty((0,), dtype=int), np.empty((0,), dtype=float), {"n": 0}
+
+        method = str(method)
+        qmc = bool(qmc)
+        tilt_tau = float(tilt_tau)
+        strata = int(strata)
+        pilot = int(pilot)
+
+        if method in ("plain", "stratified", "qmc", "stratified_qmc"):
+            q = self._p
+            cdf_q = self._cdf_p
+            use_is = False
+        elif method in ("is", "is_stratified", "is_qmc", "is_stratified_qmc"):
+            q = self._proposal_from_tilt(tilt_tau)
+            cdf_q = _cdf_from_pmf(q)
+            use_is = True
+        else:
+            raise ValueError(f"Unknown method: {method}")
+
+        meta: Dict[str, Any] = {
+            "method": method,
+            "qmc": qmc,
+            "tilt_tau": tilt_tau,
+            "use_is": use_is,
+            "strata": strata,
+            "pilot": pilot,
+            "scramble_seed": scramble_seed,
+        }
+
+        if strata <= 1:
+            u = self._draw_u(
+                rng=rng,
+                m=n,
+                base=2,
+                qmc=qmc,
+                scramble_seed=scramble_seed,
+                qmc_counters=qmc_counters,
+            )
+            idx = _inverse_cdf_sample(u, cdf_q)
+            w = (self._p[idx] / q[idx]) if use_is else np.ones(n, dtype=float)
+            return idx, w, meta
+
+        S = self._make_strata(strata)
+        masses = np.array([m for _, _, m in S], dtype=float)
+        masses = masses / float(np.sum(masses))
+
+        alloc = np.maximum(1, (n * masses).astype(int))
+        while int(np.sum(alloc)) > n:
+            alloc[np.argmax(alloc)] -= 1
+        while int(np.sum(alloc)) < n:
+            alloc[np.argmin(alloc)] += 1
+        meta["mass_alloc"] = alloc.tolist()
+
+        idx_parts = []
+        w_parts = []
+        for s, (lo, hi, _) in enumerate(S):
+            m = int(alloc[s])
+            if m <= 0:
+                continue
+
+            q_slice = q[lo:hi]
+            q_slice = _validate_pmf(q_slice)
+            cdf_slice = _cdf_from_pmf(q_slice)
+
+            base = 2 + (s % 5)
+            u = self._draw_u(
+                rng=rng,
+                m=m,
+                base=base,
+                qmc=qmc,
+                scramble_seed=scramble_seed,
+                qmc_counters=qmc_counters,
+            )
+            idx_local = _inverse_cdf_sample(u, cdf_slice) + lo
+            idx_parts.append(idx_local)
+            w_parts.append((self._p[idx_local] / q[idx_local]) if use_is else np.ones(m, dtype=float))
+
+        idx = np.concatenate(idx_parts)[:n]
+        w = np.concatenate(w_parts)[:n]
+        return idx, w, meta
+
+    def _estimate_from_samples(
+        self,
+        *,
+        idx: np.ndarray,
+        w: np.ndarray,
+        index_thr: int,
+        confidence: float,
+        use_cv: bool,
+    ) -> tuple[float, float, float, float, Dict[str, Any]]:
+        n = int(idx.size)
+        if n <= 0:
+            return 0.0, 0.0, 1.0, 0.0, {"cv_used": False}
+
+        y = (idx < int(index_thr)).astype(float)
+        w = np.asarray(w, dtype=float)
+
+        sum_w = float(np.sum(w))
+        if sum_w <= 0:
+            raise ValueError("sum of weights must be > 0")
+
+        if use_cv:
+            x = idx.astype(float)
+            EX = self._EX_index
+
+            a = w / sum_w
+            mean_y = float(np.sum(a * y))
+            mean_x = float(np.sum(a * x))
+
+            cov_xy = float(np.sum(a * (x - mean_x) * (y - mean_y)))
+            var_x = float(np.sum(a * (x - mean_x) ** 2)) + 1e-18
+            beta = cov_xy / var_x
+
+            y = y - beta * (x - EX)
+
+            cv_meta = {
+                "cv_used": True,
+                "cv_beta": float(beta),
+                "cv_EX_index": float(EX),
+                "cv_mean_index_weighted": float(mean_x),
+            }
+        else:
+            cv_meta = {"cv_used": False}
+
+        phat = float(np.sum(w * y) / sum_w)
+
+        ess = (sum_w * sum_w) / float(np.sum(w * w) + 1e-18)
+        ess_int = max(1, int(ess))
+        successes_eff = phat * ess
+        k_eff = int(round(successes_eff))
+
+        ci_low, ci_high = _wilson_ci(k_eff, ess_int, confidence)
+        return phat, float(ci_low), float(ci_high), float(successes_eff), cv_meta
+
+    def estimate_tail_prob(
+        self,
+        query: TailQuery,
+        *,
+        budget: int,
+        confidence: float = 0.99,
+        seed: Optional[int] = None,
+        **kwargs: Any,
+    ) -> ProbEstimate:
+        index_thr = _get_index_threshold(query)
+
+        n_req = int(budget)
+        if n_req <= 0:
+            raise ValueError("budget must be positive")
+
+        method = str(kwargs.get("method", "plain"))
+        tilt_tau = float(kwargs.get("tilt_tau", 0.0))
+        qmc = bool(kwargs.get("qmc", "qmc" in method))
+        scramble_seed = kwargs.get("scramble_seed", None)
+        strata = int(kwargs.get("strata", 1))
+        pilot = int(kwargs.get("pilot", 0))
+        use_cv = bool(kwargs.get("use_control_variate", False))
+
+        batch_size = int(kwargs.get("batch_size", 8192))
+        batch_size = max(256, batch_size)
+
+        target_prob = kwargs.get("target_prob", None)
+        if target_prob is not None:
+            target_prob = float(target_prob)
+        ci_width_tol = kwargs.get("ci_width_tol", None)
+        if ci_width_tol is not None:
+            ci_width_tol = float(ci_width_tol)
+
+        reuse_id = kwargs.get("reuse_id", None)
+        cache_key = None
+
+        use_fast_path = (
+            method == "plain"
+            and not qmc
+            and float(tilt_tau) == 0.0
+            and int(strata) <= 1
+            and not use_cv
+            and reuse_id is None
+            and target_prob is None
+            and ci_width_tol is None
+        )
+        if use_fast_path:
+            if self.torch is not None and self.device == "cuda":
+                g = self.torch.Generator(device=self.device)
+                if seed is not None:
+                    g.manual_seed(int(seed))
+                samples = self.torch.multinomial(self.p_t, n_req, replacement=True, generator=g)
+                k = int((samples < int(index_thr)).sum().item())
+            else:
+                rng = np.random.default_rng(seed)
+                samples = rng.choice(self._support, size=n_req, p=self._p)
+                k = int(np.sum(samples < int(index_thr)))
+
+            p_hat = k / n_req
+            ci_low, ci_high = _wilson_ci(k, n_req, confidence)
+            return ProbEstimate(
+                p_hat=float(p_hat),
+                ci_low=float(ci_low),
+                ci_high=float(ci_high),
+                cost=int(n_req),
+                meta={
+                    "device": self.device,
+                    "k": int(k),
+                    "n": int(n_req),
+                    "method": "plain",
+                    "fast_path": True,
+                    "seed": seed,
+                    "confidence": float(confidence),
+                },
+            )
+
+        use_cuda_is_path = (
+            method == "is"
+            and self.torch is not None
+            and self.device == "cuda"
+            and not qmc
+            and float(tilt_tau) > 0.0
+            and int(strata) <= 1
+            and not use_cv
+            and reuse_id is None
+            and target_prob is None
+            and ci_width_tol is None
+        )
+        if use_cuda_is_path:
             g = self.torch.Generator(device=self.device)
             if seed is not None:
                 g.manual_seed(int(seed))
-            # torch.multinomial draws indices ~ categorical(p) efficiently on GPU
-            samples = self.torch.multinomial(self.p_t, n, replacement=True, generator=g)
-            k = int((samples < idx).sum().item())
-        else:
-            rng = np.random.default_rng(seed)
-            samples = rng.choice(np.arange(self.K), size=n, p=self.p)
-            k = int(np.sum(samples < idx))
 
-        p_hat = k / n
-        lo, hi = wilson_ci(k, n, confidence)
-        return ProbEstimate(p_hat=float(p_hat), ci_low=lo, ci_high=hi, cost=n,
-                            meta={"device": self.device, "k": k, "n": n})
+            tau_t = self.torch.tensor(float(tilt_tau), device=self.device, dtype=self.p_t.dtype)
+            logw = -tau_t * self.support_t.to(dtype=self.p_t.dtype)
+            q_unnorm = self.p_t * self.torch.exp(logw - self.torch.max(logw))
+            q_t = q_unnorm / self.torch.sum(q_unnorm)
+
+            samples = self.torch.multinomial(q_t, n_req, replacement=True, generator=g)
+            y = (samples < int(index_thr)).to(dtype=self.p_t.dtype)
+            w = self.p_t[samples] / q_t[samples]
+
+            sum_w = self.torch.sum(w)
+            phat = self.torch.sum(w * y) / sum_w
+            ess = (sum_w * sum_w) / self.torch.sum(w * w)
+
+            ess_val = float(ess.item())
+            ess_int = max(1, int(ess_val))
+            successes_eff = float((phat * ess).item())
+            k_eff = int(round(successes_eff))
+
+            ci_low, ci_high = _wilson_ci(k_eff, ess_int, confidence)
+            return ProbEstimate(
+                p_hat=float(phat.item()),
+                ci_low=float(ci_low),
+                ci_high=float(ci_high),
+                cost=int(n_req),
+                meta={
+                    "device": self.device,
+                    "n": int(n_req),
+                    "method": "is",
+                    "tilt_tau": float(tilt_tau),
+                    "use_is": True,
+                    "fast_path": True,
+                    "seed": seed,
+                    "confidence": float(confidence),
+                    "successes_eff": float(successes_eff),
+                    "ess": float(ess_val),
+                },
+            )
+
+        if reuse_id is not None:
+            cache_key = _CacheKey(
+                reuse_id=str(reuse_id),
+                seed=seed,
+                method=method,
+                tilt_tau=tilt_tau,
+                qmc=qmc,
+                scramble_seed=scramble_seed,
+                strata=strata,
+                pilot=pilot,
+            )
+
+        if cache_key is not None and cache_key in self._cache:
+            cached = self._cache[cache_key]
+            idx = cached["idx"]
+            w = cached["w"]
+            rng_state = cached["rng_state"]
+            qmc_counters = cached["qmc_counters"]
+            base_meta = cached["meta"]
+        else:
+            idx = np.empty((0,), dtype=int)
+            w = np.empty((0,), dtype=float)
+            rng_state = None
+            qmc_counters: Dict[int, int] = {}
+            base_meta: Dict[str, Any] = {}
+
+        new_samples_cost = 0
+        if idx.size < n_req:
+            rng = np.random.default_rng(seed)
+            if rng_state is not None:
+                rng.bit_generator.state = rng_state
+
+            decided = False
+            while idx.size < n_req and not decided:
+                m = min(batch_size, n_req - int(idx.size))
+
+                idx_b, w_b, meta_b = self._draw_indices_batch(
+                    rng=rng,
+                    n=m,
+                    method=method,
+                    tilt_tau=tilt_tau,
+                    qmc=qmc,
+                    scramble_seed=scramble_seed,
+                    strata=strata,
+                    pilot=pilot,
+                    qmc_counters=qmc_counters,
+                )
+                idx = np.concatenate([idx, idx_b])
+                w = np.concatenate([w, w_b])
+                new_samples_cost += int(m)
+                base_meta = meta_b
+
+                if target_prob is not None or ci_width_tol is not None:
+                    phat_tmp, ci_low_tmp, ci_high_tmp, _, _ = self._estimate_from_samples(
+                        idx=idx,
+                        w=w,
+                        index_thr=index_thr,
+                        confidence=confidence,
+                        use_cv=use_cv,
+                    )
+                    if target_prob is not None:
+                        if ci_high_tmp < target_prob or ci_low_tmp > target_prob:
+                            decided = True
+                    if ci_width_tol is not None:
+                        if (ci_high_tmp - ci_low_tmp) <= ci_width_tol:
+                            decided = True
+
+            rng_state = rng.bit_generator.state
+
+        if cache_key is not None:
+            self._cache[cache_key] = {
+                "idx": idx,
+                "w": w,
+                "rng_state": rng_state,
+                "qmc_counters": dict(qmc_counters),
+                "meta": dict(base_meta),
+            }
+
+        idx_use = idx[:n_req]
+        w_use = w[:n_req]
+
+        phat, ci_low, ci_high, successes_eff, cv_meta = self._estimate_from_samples(
+            idx=idx_use,
+            w=w_use,
+            index_thr=index_thr,
+            confidence=confidence,
+            use_cv=use_cv,
+        )
+
+        meta = {
+            "method": str(base_meta.get("method", method)),
+            "qmc": bool(base_meta.get("qmc", qmc)),
+            "tilt_tau": float(base_meta.get("tilt_tau", tilt_tau)),
+            "use_is": bool(base_meta.get("use_is", "is" in method)),
+            "strata": int(base_meta.get("strata", strata)),
+            "pilot": int(base_meta.get("pilot", pilot)),
+            "scramble_seed": base_meta.get("scramble_seed", scramble_seed),
+            "seed": seed,
+            "n": int(n_req),
+            "successes_eff": float(successes_eff),
+            "confidence": float(confidence),
+            "reuse_id": str(reuse_id) if reuse_id is not None else None,
+            "cache_size": int(idx.size),
+            "new_samples_this_call": int(new_samples_cost),
+        }
+        meta.update(cv_meta)
+
+        return ProbEstimate(
+            p_hat=float(phat),
+            ci_low=float(ci_low),
+            ci_high=float(ci_high),
+            cost=int(new_samples_cost),
+            meta=meta,
+        )
 
 
 def main():
