@@ -7,6 +7,10 @@ from typing import Any, Dict, Optional, Literal
 import numpy as np
 import optuna
 import scipy.stats as st
+from classiq import synthesize
+
+from quantum_estimator import QuantumIQAECDF, ProbEstimate
+from classiq_to_cuda import synthesize_to_qasm, qasm_to_cudaq, classiq_to_qasm
 
 TailMode = Literal["pnl_leq", "loss_geq"]
 
@@ -18,18 +22,6 @@ class TailQuery:
     threshold_value: Optional[float] = None
     index: Optional[int] = None
     grid_points: Optional[np.ndarray] = None
-
-
-@dataclass(frozen=True)
-class ProbEstimate:
-    p_hat: float
-    ci_low: float
-    ci_high: float
-    cost: int
-    meta: Dict[str, Any]
-
-
-# ----------- Helpers -----------
 
 def get_log_normal_probabilities(mu_normal, sigma_normal, num_points):
     mean = np.exp(mu_normal + sigma_normal ** 2 / 2)
@@ -134,75 +126,12 @@ class ClassicalDiscreteMC:
                             meta={"device": self.device, "k": k, "n": n})
 
 
-# Quantum estimator (Classiq IQAE)
-
-class QuantumIQAECDF:
-    def __init__(self, probs_list, num_qubits: int, max_width: int = 28):
-        from classiq import qfunc, qperm, QArray, QBit, QNum, Const, inplace_prepare_state, Constraints, Preferences
-        from classiq.applications.iqae.iqae import IQAE
-
-        self.IQAE = IQAE
-        self.Constraints = Constraints
-        self.Preferences = Preferences
-        self.num_qubits = int(num_qubits)
-        self.max_width = int(max_width)
-
-        # Bind probs into closure for Classiq decorators
-        self.PROBS = list(map(float, probs_list))
-        self.GLOBAL_INDEX = 0
-
-        @qfunc(synthesize_separately=True)
-        def state_preparation(asset: QArray[QBit], ind: QBit):
-            inplace_prepare_state(self.PROBS, bound=0, target=asset)
-            payoff(asset=asset, ind=ind)
-
-        @qperm
-        def payoff(asset: Const[QNum], ind: QBit):
-            ind ^= asset < self.GLOBAL_INDEX
-
-        self.state_preparation = state_preparation
-
-    def _cost_from_iqae(self, res) -> int:
-        # Best-effort: sum shots*(2k+1) if iterations_data exists; else 0
-        iters = getattr(res, "iterations_data", None)
-        if not iters:
-            return 0
-        total = 0
-        for it in iters:
-            k = int(getattr(it, "grover_iterations", 0))
-            sr = getattr(it, "sample_results", None)
-            shots = int(getattr(sr, "num_shots", 0)) if sr is not None else 0
-            total += shots * (2 * k + 1)
-        return int(total)
-
-    def estimate_tail_prob(self, query: TailQuery, *, epsilon: float, alpha: float,
-                           max_total_queries: Optional[int] = None, seed: Optional[int] = None, **_):
-        if query.index is None:
-            raise ValueError("query.index required")
-        self.GLOBAL_INDEX = int(query.index)
-
-        iqae = self.IQAE(
-            state_prep_op=self.state_preparation,
-            problem_vars_size=self.num_qubits,
-            constraints=self.Constraints(max_width=self.max_width),
-            preferences=self.Preferences(machine_precision=self.num_qubits),
-        )
-        res = iqae.run(epsilon=float(epsilon), alpha=float(alpha))
-        p_hat = float(res.estimation)
-        ci = list(res.confidence_interval)
-        cost = self._cost_from_iqae(res)
-        if max_total_queries is not None:
-            cost = min(cost, int(max_total_queries))
-        return ProbEstimate(p_hat=p_hat, ci_low=float(ci[0]), ci_high=float(ci[1]), cost=int(cost),
-                            meta={"epsilon": epsilon, "alpha": alpha, "seed": seed})
-
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--log-in", action="store_true")
     ap.add_argument("--classical", action="store_true")
     ap.add_argument("--quantum", action="store_true")
+    ap.add_argument("--compile", action="store_true")
     ap.add_argument("--trials", type=int, default=40)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--num-qubits", type=int, default=7)
@@ -263,7 +192,26 @@ def main():
             return cost + (1e9 * max(0.0, err - args.tau)) if args.tau > 0 else cost + 1e6 * err
 
     else:
+
         est = QuantumIQAECDF(probs, num_qubits=args.num_qubits)
+        est.GLOBAL_INDEX = 42
+        if args.compile:
+            # Synthesize (requires Classiq auth - do once)
+            qasm = est.synthesize_to_qasm(ref_idx)
+            with open("circuit.qasm", "w") as f:
+                f.write(qasm)
+            print(f"Saved circuit.qasm for threshold_index={ref_idx}")
+            return
+        with open("circuit.qasm") as f:
+            qasm = f.read()
+
+        # Convert to CUDA-Q kernel (works offline)
+        kernel = qasm_to_cudaq(qasm)
+
+        # Run with CUDA-Q
+        import cudaq
+        cudaq.set_target("nvidia")
+        result = cudaq.sample(kernel, shots_count=1000)
 
         def estimator(q: TailQuery, **kw):
             return est.estimate_tail_prob(q, **kw)
