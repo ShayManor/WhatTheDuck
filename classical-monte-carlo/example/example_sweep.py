@@ -4,8 +4,10 @@ import scipy
 
 from classiq import Constraints, Preferences
 
-from structures import TailQuery
-from estimators_classical import DiscreteMonteCarloEstimator
+from estimators_classical import (
+    DiscreteMonteCarloEstimator,
+    AdvancedDiscreteMonteCarloEstimator,
+)
 from estimators_quantum import ClassiqIQAECDFEstimator
 from var_search import solve_var
 
@@ -43,13 +45,15 @@ lo_index = 0
 hi_index = len(grid_points) - 1
 
 # ---------------------------------------
-# Classical sweep example (budget sweep)
+# Classical sweep examples (baseline vs advanced)
 # ---------------------------------------
-classical_est = DiscreteMonteCarloEstimator(probs=probs)
+baseline_est = DiscreteMonteCarloEstimator(probs=probs)
+advanced_est = AdvancedDiscreteMonteCarloEstimator(probs=probs)
 
 for budget in [500, 2_000, 10_000]:
-    res = solve_var(
-        classical_est.estimate_tail_prob,
+    # Baseline
+    res_base = solve_var(
+        baseline_est.estimate_tail_prob,
         alpha_target=ALPHA,
         tail_mode="pnl_leq",
         grid_points=grid_points,
@@ -67,8 +71,54 @@ for budget in [500, 2_000, 10_000]:
             "refine_mult": 2.0,
         },
     )
-    err = abs(res.var_value - VAR)
-    print(f"[Classical MC] budget={budget:>6}  var={res.var_value:.6f}  err={err:.6f}  cost={res.total_cost}")
+    err_base = abs(res_base.var_value - VAR)
+    print(
+        f"[Classical MC Baseline] budget={budget:>6}  var={res_base.var_value:.6f}  "
+        f"err={err_base:.6f}  cost={res_base.total_cost}"
+    )
+
+    # Advanced
+    res_adv = solve_var(
+        advanced_est.estimate_tail_prob,
+        alpha_target=ALPHA,
+        tail_mode="pnl_leq",
+        grid_points=grid_points,
+        lo_index=lo_index,
+        hi_index=hi_index,
+        value_tol=0.0,
+        prob_tol=TOLERANCE,
+        max_steps=64,
+        estimator_params={
+            "budget": budget,
+            "confidence": 0.99,
+            "seed": 123,
+
+            # Advanced knobs
+            "method": "is_stratified_qmc",   # try also: "plain", "is", "stratified", "is_stratified"
+            "tilt_tau": 0.02,               # importance sampling tilt, tune this
+            "strata": 16,                   # number of strata
+            "qmc": True,                    # Halton-based QMC
+            "scramble_seed": 7,             # makes QMC less brittle
+            "use_control_variate": True,    # control variate on index
+
+            # Safe reuse across thresholds and refinements (Option B cache growth)
+            "reuse_id": f"adv_budget_{budget}",
+
+            # optional estimator-level adaptive stopping (solve_var already refines too)
+            # "target_prob": ALPHA,
+            # "ci_width_tol": TOLERANCE,
+            # "batch_size": 50_000,
+
+            # refinement knobs (also sweepable)
+            "max_refinements": 1,
+            "refine_mult": 2.0,
+        },
+    )
+    err_adv = abs(res_adv.var_value - VAR)
+    print(
+        f"[Classical MC Advanced] budget={budget:>6}  var={res_adv.var_value:.6f}  "
+        f"err={err_adv:.6f}  cost={res_adv.total_cost}"
+    )
 
 # ---------------------------------------
 # Quantum sweep example (epsilon/alpha sweep)
@@ -102,4 +152,7 @@ for epsilon, alpha in [(0.10, 0.05), (0.05, 0.01), (0.02, 0.01)]:
         },
     )
     err = abs(res.var_value - VAR)
-    print(f"[Quantum IQAE] eps={epsilon:<5} alpha={alpha:<5}  var={res.var_value:.6f}  err={err:.6f}  cost={res.total_cost}")
+    print(
+        f"[Quantum IQAE] eps={epsilon:<5} alpha={alpha:<5}  var={res.var_value:.6f}  "
+        f"err={err:.6f}  cost={res.total_cost}"
+    )

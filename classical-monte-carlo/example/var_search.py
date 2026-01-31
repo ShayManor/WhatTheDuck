@@ -1,7 +1,7 @@
 # var_search.py
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -57,16 +57,15 @@ def solve_var(
 
     lo, hi = lo_index, hi_index
 
-    # If your stopping is based on value resolution, convert to index resolution dynamically.
     def bracket_value_width(a: int, b: int) -> float:
         return float(grid_points[b] - grid_points[a])
 
     while lo < hi and steps < max_steps:
         mid = (lo + hi) // 2
 
-        # Try to get a decisive CI at this mid.
         params = dict(estimator_params)
         est: Optional[ProbEstimate] = None
+
         for refine_round in range(max_refinements + 1):
             q = TailQuery(
                 alpha_target=alpha_target,
@@ -114,14 +113,13 @@ def solve_var(
                 hi = mid
             break
 
-        # Value-based stopping: if bracket is tight enough, stop early.
         if lo < hi and bracket_value_width(lo, hi) <= value_tol:
             break
 
     var_index = lo
     var_value = float(grid_points[var_index])
 
-    # VaR CI from bracket endpoints (coarse but honest):
+    # VaR CI from bracket endpoints (coarse but honest)
     ci_low = float(grid_points[lo])
     ci_high = float(grid_points[hi]) if hi < len(grid_points) else float(grid_points[-1])
 

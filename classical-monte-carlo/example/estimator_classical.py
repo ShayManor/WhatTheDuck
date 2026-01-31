@@ -1,3 +1,4 @@
+# estimators_classical.py
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
@@ -8,6 +9,10 @@ from structures import TailQuery, ProbEstimate, ClassicalProbEstimator
 
 
 def _normal_approx_z(confidence: float) -> float:
+    """
+    Two-sided z for confidence level (e.g., 0.99 -> z ~ 2.575).
+    Uses a dependency-free approximation (Abramowitz-Stegun style).
+    """
     delta = 1.0 - float(confidence)
     p = 1.0 - delta / 2.0
 
@@ -70,6 +75,70 @@ def _wilson_ci(k: int, n: int, confidence: float) -> tuple[float, float]:
     lo = max(0.0, center - half)
     hi = min(1.0, center + half)
     return (lo, hi)
+
+
+# ======================================================================================
+# Baseline: Discrete Monte Carlo (your original estimator)
+# ======================================================================================
+
+
+class DiscreteMonteCarloEstimator(ClassicalProbEstimator):
+    """
+    Estimates p = P(sample_index < query.index) by sampling from the discrete distribution `probs`.
+
+    Cost accounting:
+      - cost = number of samples used (<= budget)
+    """
+
+    def __init__(self, probs: list[float]):
+        self._probs = np.array(probs, dtype=float)
+        s = float(np.sum(self._probs))
+        if s <= 0:
+            raise ValueError("probs must sum to > 0")
+        self._probs = self._probs / s
+        self._support = np.arange(len(probs), dtype=int)
+
+    def estimate_tail_prob(
+        self,
+        query: TailQuery,
+        *,
+        budget: int,
+        confidence: float = 0.99,
+        seed: Optional[int] = None,
+        **kwargs: Any,
+    ) -> ProbEstimate:
+        if query.index is None:
+            raise ValueError("DiscreteMonteCarloEstimator requires query.index")
+        n = int(budget)
+        if n <= 0:
+            raise ValueError("budget must be positive")
+
+        rng = np.random.default_rng(seed)
+        samples = rng.choice(self._support, size=n, p=self._probs)
+
+        # Tail event consistent with the notebook: CDF(index) = P(bin < index)
+        successes = int(np.sum(samples < int(query.index)))
+        p_hat = successes / n
+        ci_low, ci_high = _wilson_ci(successes, n, confidence)
+
+        return ProbEstimate(
+            p_hat=float(p_hat),
+            ci_low=float(ci_low),
+            ci_high=float(ci_high),
+            cost=int(n),
+            meta={
+                "method": "discrete_mc",
+                "seed": seed,
+                "successes": successes,
+                "n": n,
+                "confidence": confidence,
+            },
+        )
+
+
+# ======================================================================================
+# Advanced: IS + stratification + QMC + control variates + safe sample reuse (Option B)
+# ======================================================================================
 
 
 def _validate_pmf(probs: np.ndarray) -> np.ndarray:
@@ -152,19 +221,26 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
       - IS (exponential tilting), stratification, QMC, control variates
       - Option B caching: cached sample set grows to satisfy larger budgets safely
       - cost returned is NEW samples generated in the call
-    Tail event is P(bin < query.index).
+
+    Tail event is P(bin < query.index), consistent with your baseline and solve_var.
     """
 
     def __init__(self, probs: list[float]):
         self._p = _validate_pmf(np.array(probs, dtype=float))
         self._support = np.arange(self._p.size, dtype=int)
         self._cdf_p = _cdf_from_pmf(self._p)
+
+        # Control variate: X = index has known expectation under p
         self._EX_index = float(np.sum(self._support * self._p))
 
         # Cache maps key -> dict holding samples and state for safe extension
         self._cache: Dict[_CacheKey, Dict[str, Any]] = {}
 
     def _proposal_from_tilt(self, tau: float) -> np.ndarray:
+        """
+        Exponential tilt that increases probability mass on small indices (left tail).
+        q_i ∝ p_i * exp(-tau * i), tau >= 0.
+        """
         tau = float(tau)
         if tau < 0:
             raise ValueError("tilt_tau must be >= 0")
@@ -173,6 +249,10 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
         return _validate_pmf(q_unnorm)
 
     def _make_strata(self, num_strata: int) -> list[Tuple[int, int, float]]:
+        """
+        Make contiguous strata of indices with approximately equal probability mass under p.
+        Returns list of (lo, hi_exclusive, mass).
+        """
         k = int(num_strata)
         if k <= 1:
             return [(0, self._p.size, 1.0)]
@@ -258,19 +338,26 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
             "scramble_seed": scramble_seed,
         }
 
+        # No stratification
         if strata <= 1:
             u = self._draw_u(
-                rng=rng, m=n, base=2, qmc=qmc, scramble_seed=scramble_seed, qmc_counters=qmc_counters
+                rng=rng,
+                m=n,
+                base=2,
+                qmc=qmc,
+                scramble_seed=scramble_seed,
+                qmc_counters=qmc_counters,
             )
             idx = _inverse_cdf_sample(u, cdf_q)
             w = (self._p[idx] / q[idx]) if use_is else np.ones(n, dtype=float)
             return idx, w, meta
 
+        # Stratification by mass under the true pmf p
         S = self._make_strata(strata)
         masses = np.array([m for _, _, m in S], dtype=float)
         masses = masses / float(np.sum(masses))
 
-        # Simple mass allocation (pilot here affects meta only; keeping allocation stable/reproducible)
+        # Stable mass allocation (pilot unused for allocation here, but kept for API compatibility)
         alloc = np.maximum(1, (n * masses).astype(int))
         while int(np.sum(alloc)) > n:
             alloc[np.argmax(alloc)] -= 1
@@ -284,14 +371,19 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
             m = int(alloc[s])
             if m <= 0:
                 continue
+
             q_slice = q[lo:hi]
             q_slice = _validate_pmf(q_slice)
             cdf_slice = _cdf_from_pmf(q_slice)
 
-            # Vary base per stratum for a tiny decorrelation effect
-            base = 2 + (s % 5)
+            base = 2 + (s % 5)  # small decorrelation across strata
             u = self._draw_u(
-                rng=rng, m=m, base=base, qmc=qmc, scramble_seed=scramble_seed, qmc_counters=qmc_counters
+                rng=rng,
+                m=m,
+                base=base,
+                qmc=qmc,
+                scramble_seed=scramble_seed,
+                qmc_counters=qmc_counters,
             )
             idx_local = _inverse_cdf_sample(u, cdf_slice) + lo
             idx_parts.append(idx_local)
@@ -316,20 +408,27 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
 
         y = (idx < int(index_thr)).astype(float)
         w = np.asarray(w, dtype=float)
+
         sum_w = float(np.sum(w))
         if sum_w <= 0:
             raise ValueError("sum of weights must be > 0")
 
+        cv_meta: Dict[str, Any]
         if use_cv:
+            # Control variate using X = index with known E_p[X]
             x = idx.astype(float)
             EX = self._EX_index
+
             a = w / sum_w
             mean_y = float(np.sum(a * y))
             mean_x = float(np.sum(a * x))
+
             cov_xy = float(np.sum(a * (x - mean_x) * (y - mean_y)))
             var_x = float(np.sum(a * (x - mean_x) ** 2)) + 1e-18
             beta = cov_xy / var_x
+
             y = y - beta * (x - EX)
+
             cv_meta = {
                 "cv_used": True,
                 "cv_beta": float(beta),
@@ -339,6 +438,7 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
         else:
             cv_meta = {"cv_used": False}
 
+        # Self-normalized importance sampling estimate
         phat = float(np.sum(w * y) / sum_w)
 
         # Effective sample size for CI approximation
@@ -346,6 +446,7 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
         ess_int = max(1, int(ess))
         successes_eff = phat * ess
         k_eff = int(round(successes_eff))
+
         ci_low, ci_high = _wilson_ci(k_eff, ess_int, confidence)
         return phat, float(ci_low), float(ci_high), float(successes_eff), cv_meta
 
@@ -358,6 +459,28 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
         seed: Optional[int] = None,
         **kwargs: Any,
     ) -> ProbEstimate:
+        """
+        Compatible with solve_var.
+
+        Supported kwargs (optional):
+          - method: "plain" | "is" | "stratified" | "is_stratified"
+                    plus qmc variants: "qmc", "is_qmc", "stratified_qmc", "is_stratified_qmc"
+            Default: "plain"
+          - tilt_tau: float >= 0. Default: 0.0 (only used for IS methods)
+          - qmc: bool. Default: inferred from method name containing "qmc"
+          - scramble_seed: int | None. Default: None
+          - strata: int >= 1. Default: 1
+          - pilot: int >= 0. Default: 0 (kept for API compatibility)
+          - use_control_variate: bool. Default: False
+
+          - reuse_id: str | None. If provided, enables Option B caching across calls:
+              cache grows to satisfy larger budgets safely and stores RNG/QMC state.
+          - batch_size: int. Default: 8192 (when generating new samples)
+
+          - target_prob: float | None. If set, enables estimator-level adaptive stopping:
+              stop when CI entirely above or below target_prob.
+          - ci_width_tol: float | None. If set, stop when (ci_high-ci_low) <= tol.
+        """
         index_thr = _get_index_threshold(query)
 
         n_req = int(budget)
@@ -372,15 +495,15 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
         pilot = int(kwargs.get("pilot", 0))
         use_cv = bool(kwargs.get("use_control_variate", False))
 
-        # Adaptive stopping inside estimator (optional)
+        batch_size = int(kwargs.get("batch_size", 8192))
+        batch_size = max(256, batch_size)
+
         target_prob = kwargs.get("target_prob", None)
         if target_prob is not None:
             target_prob = float(target_prob)
         ci_width_tol = kwargs.get("ci_width_tol", None)
         if ci_width_tol is not None:
             ci_width_tol = float(ci_width_tol)
-        batch_size = int(kwargs.get("batch_size", 8192))
-        batch_size = max(256, batch_size)
 
         reuse_id = kwargs.get("reuse_id", None)
         cache_key = None
@@ -396,7 +519,7 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
                 pilot=pilot,
             )
 
-        # Initialize RNG state (for safe extension) and QMC counters
+        # Load cache if present
         if cache_key is not None and cache_key in self._cache:
             cached = self._cache[cache_key]
             idx = cached["idx"]
@@ -408,21 +531,20 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
             idx = np.empty((0,), dtype=int)
             w = np.empty((0,), dtype=float)
             rng_state = None
-            qmc_counters = {}  # base -> used count
-            base_meta = {}
+            qmc_counters: Dict[int, int] = {}
+            base_meta: Dict[str, Any] = {}
 
-        # Option B: grow cache up to requested budget
+        # Option B: grow cache to satisfy larger budgets safely
         new_samples_cost = 0
         if idx.size < n_req:
-            # Create RNG and set to cached state if present
             rng = np.random.default_rng(seed)
             if rng_state is not None:
                 rng.bit_generator.state = rng_state
 
-            # Keep drawing until we reach n_req or adaptive stop triggers
             decided = False
             while idx.size < n_req and not decided:
                 m = min(batch_size, n_req - int(idx.size))
+
                 idx_b, w_b, meta_b = self._draw_indices_batch(
                     rng=rng,
                     n=m,
@@ -437,25 +559,27 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
                 idx = np.concatenate([idx, idx_b])
                 w = np.concatenate([w, w_b])
                 new_samples_cost += int(m)
-
-                # Adaptive stopping (optional)
-                if target_prob is not None or ci_width_tol is not None:
-                    phat, ci_low, ci_high, _, _ = self._estimate_from_samples(
-                        idx=idx, w=w, index_thr=index_thr, confidence=confidence, use_cv=use_cv
-                    )
-                    if target_prob is not None:
-                        if ci_high < target_prob or ci_low > target_prob:
-                            decided = True
-                    if ci_width_tol is not None:
-                        if (ci_high - ci_low) <= ci_width_tol:
-                            decided = True
-
                 base_meta = meta_b
 
-            # Save updated RNG state for future extensions
+                # Optional adaptive stopping inside estimator
+                if target_prob is not None or ci_width_tol is not None:
+                    phat_tmp, ci_low_tmp, ci_high_tmp, _, _ = self._estimate_from_samples(
+                        idx=idx,
+                        w=w,
+                        index_thr=index_thr,
+                        confidence=confidence,
+                        use_cv=use_cv,
+                    )
+                    if target_prob is not None:
+                        if ci_high_tmp < target_prob or ci_low_tmp > target_prob:
+                            decided = True
+                    if ci_width_tol is not None:
+                        if (ci_high_tmp - ci_low_tmp) <= ci_width_tol:
+                            decided = True
+
             rng_state = rng.bit_generator.state
 
-        # If caching enabled, store grown samples and states
+        # Store updated cache
         if cache_key is not None:
             self._cache[cache_key] = {
                 "idx": idx,
@@ -465,7 +589,7 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
                 "meta": dict(base_meta),
             }
 
-        # Use only the first n_req samples for the estimate (so "budget" is respected)
+        # Respect budget: estimate using exactly first n_req samples
         idx_use = idx[:n_req]
         w_use = w[:n_req]
 
@@ -502,3 +626,9 @@ class AdvancedDiscreteMonteCarloEstimator(ClassicalProbEstimator):
             cost=int(new_samples_cost),
             meta=meta,
         )
+
+
+__all__ = [
+    "DiscreteMonteCarloEstimator",
+    "AdvancedDiscreteMonteCarloEstimator",
+]
