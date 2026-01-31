@@ -12,7 +12,7 @@ sigma = 0.13  # daily volatility (2%)
 confidence_level = 0.95
 # num_samples_list = [n for n in range(10, 10**8 + 1, 100)]
 num_samples_max = 10**8
-num_samples_count = 500
+num_samples_count = 200
 num_samples_list = np.unique(
     np.logspace(1, np.log10(num_samples_max), num_samples_count, dtype=int)
 ).tolist()  # 10, ..., 10^8
@@ -117,7 +117,7 @@ plt.ylabel("Number of Samples N")
 plt.title("Monte Carlo Sample Requirement vs 1/ε²")
 plt.grid(True, which='both', ls='--', alpha=0.5)
 
-# Optional: reference line (perfect proportionality)
+# Reference line: 1/ε²
 slope = num_samples_list[-1] / inv_error_sq[-1]
 plt.plot(inv_error_sq, slope*inv_error_sq, 'r--', label='Reference O(1/ε²)')
 
