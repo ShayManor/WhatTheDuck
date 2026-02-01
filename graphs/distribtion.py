@@ -21,11 +21,11 @@ plt.rcParams['mathtext.fontset'] = 'stix'
 
 # Professional color palette - different colors for each T
 COLORS = {
-    5: '#1e3a8a',  # Deep blue
-    4: '#3b82f6',  # Bright blue
+    1: '#1e3a8a',  # Deep blue
+    2: '#3b82f6',  # Bright blue
     3: '#6366f1',  # Indigo
-    2: '#8b5cf6',  # Purple
-    1: '#a855f7',  # Lighter purple
+    4: '#8b5cf6',  # Purple
+    5: '#a855f7',  # Lighter purple
 }
 COLOR_GRID = '#e5e7eb'         # Light gray grid
 COLOR_TEXT = '#1f2937'         # Dark gray text
