@@ -267,8 +267,16 @@ def var_parameter_sweep(
 
 if __name__ == "__main__":
     # Define sweep parameters
-    epsilons = [0.1, 0.075, 0.05, 0.025, 0.0125, 0.01, 0.005, 0.0025, 0.001, 0.0005]
-    var_alphas = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
+    E_COUNT = 20
+    E_MAX = 0.1
+    E_MIN = 0.0001
+
+    A_COUNT = 20
+    A_MIN = 0.01
+    A_MAX = 0.10
+
+    epsilons = np.logspace(np.log10(E_MAX), np.log10(E_MIN), E_COUNT).tolist()
+    var_alphas = np.linspace(A_MIN, A_MAX, A_COUNT).tolist()
     
     var_parameter_sweep(
         epsilons=epsilons,
