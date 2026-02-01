@@ -140,7 +140,8 @@ def run_iqae_estimation(
 
 def var_parameter_sweep(
     epsilons: List[float],
-    alpha_vars: List[float],
+    iqae_alphas: List[float],
+    alpha: float,
     mu: float = MU,
     sigma: float = SIGMA,
     num_qubits: int = NUM_QUBITS,
@@ -201,13 +202,14 @@ def var_parameter_sweep(
     print(f"Starting sweep: {len(epsilons)} epsilons × {len(alpha_vars)} confidence levels")
     
     try:
-        for alpha_var in alpha_vars:
-            confidence = 1 - alpha_var
-            print(f"\n=== Alpha: {alpha_var:.3f} (Confidence: {confidence:.3f}) ===")
+        # for alpha_var in alpha_vars:
+        for alpha_iqae in iqae_alphas:
+            confidence = 1 - alpha
+            print(f"\n=== Alpha_iqae: {alpha_iqae:.3f} (Confidence: {confidence:.3f}) ===")
             
             # Calculate classical VaR
-            var_theoretical = calculate_classical_var(grid_points, probs, alpha_var)
-            var_index = get_var_index(probs, alpha_var)
+            var_theoretical = calculate_classical_var(grid_points, probs, alpha)
+            var_index = get_var_index(probs, alpha)
             GLOBAL_INDEX = int(var_index)
             
             print(f"Classical VaR: {var_theoretical:.4f} (index {var_index})")
@@ -271,16 +273,17 @@ if __name__ == "__main__":
     E_MAX = 0.1
     E_MIN = 0.0001
 
-    A_COUNT = 20
-    A_MIN = 0.01
-    A_MAX = 0.10
+    AQ_COUNT = 10
+    AQ_MIN = 0.1
+    AQ_MAX = 0.05
 
     epsilons = np.logspace(np.log10(E_MAX), np.log10(E_MIN), E_COUNT).tolist()
-    var_alphas = np.linspace(A_MIN, A_MAX, A_COUNT).tolist()
+    iqae_alphas = np.linspace(AQ_MIN, AQ_MAX, AQ_COUNT).tolist()
     
     var_parameter_sweep(
         epsilons=epsilons,
-        alpha_vars=var_alphas,
+        iqae_alphas=iqae_alphas,
+        alpha=0.5,
         mu=0.15,
         sigma=0.20,
         num_qubits=7,
