@@ -18,6 +18,8 @@
 import csv
 import os
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
@@ -31,10 +33,10 @@ from classiq.applications.iqae.iqae import IQAE
 # How many qubits we want the quantum circuit to be
 num_qubits = 7
 
-# Mu (μ) represents the Average
+# Mu (μ) represents the Average (Gaussian mean)
 mu = 0.7
 
-# Sigma (σ) represents the Standard Deviation
+# Sigma (σ) represents the Standard Deviation (Gaussian stddev)
 sigma = 0.13
 
 # The Alpha (α) parameter represents the probability in which P(X > v) = 1 - α
@@ -47,20 +49,20 @@ TOLERANCE = ALPHA / 10
 GLOBAL_INDEX: int = 0
 
 
-def get_log_normal_probabilities(mu_normal, sigma_normal, num_points):
-    log_normal_mean = np.exp(mu + sigma**2 / 2)
-    log_normal_variance = (np.exp(sigma**2) - 1) * np.exp(2 * mu + sigma**2)
-    log_normal_stddev = np.sqrt(log_normal_variance)
+def get_normal_probabilities(mu_normal, sigma_normal, num_points):
+    normal_mean = mu_normal
+    normal_stddev = sigma_normal
+    normal_variance = sigma_normal**2
 
     # cutting the distribution 3 sigmas from the mean
-    low = np.maximum(0, log_normal_mean - 3 * log_normal_stddev)
-    high = log_normal_mean + 3 * log_normal_stddev
-    print(log_normal_mean, log_normal_variance, log_normal_stddev, low, high)
+    low = normal_mean - 3 * normal_stddev
+    high = normal_mean + 3 * normal_stddev
+    print(normal_mean, normal_variance, normal_stddev, low, high)
     x = np.linspace(low, high, num_points)
-    return x, scipy.stats.lognorm.pdf(x, s=sigma_normal, scale=np.exp(mu_normal))
+    return x, scipy.stats.norm.pdf(x, loc=mu_normal, scale=sigma_normal)
 
 
-grid_points, probs = get_log_normal_probabilities(mu, sigma, 2**num_qubits)
+grid_points, probs = get_normal_probabilities(mu, sigma, 2**num_qubits)
 
 # In order to have a benchmark to our solution, and since the problem space is not too big, let's calculate the
 # Value at Risk classically, and plot the probability distribution function.
@@ -69,7 +71,7 @@ probs = (probs / np.sum(probs)).tolist()
 
 fig, ax1 = plt.subplots()
 
-# Plotting the log-normal probability function
+# Plotting the normal probability function
 ax1.plot(grid_points, probs, "go-", label="Probability")  # Green line with circles
 ax1.tick_params(axis="y", labelcolor="g")
 ax1.set_xlabel("Asset Value")
@@ -114,10 +116,16 @@ def calc_alpha(index: int, probs: list[float]):
 
 # This function updates the new index based on the comparison between the measured alpha value and the required
 # value. The search size correlates with the current binary search step.
-def update_index(index: int, required_alpha: float, alpha_v: float, search_size: int):
+def update_index(
+    index: int,
+    required_alpha: float,
+    alpha_v: float,
+    search_size: int,
+    max_index: int,
+):
     if alpha_v < required_alpha:
-        return index + search_size
-    return index - search_size
+        return min(index + search_size, max_index)
+    return max(index - search_size, 0)
 
 
 # This is the main Value at Risk function, which gets the required probability (required_alpha), the index and
@@ -130,7 +138,7 @@ def print_status(v, alpha_v, search_size, index):
 
 
 def print_results(grid_points, index, probs):
-    print(f"Value at risk at {ALPHA*100}%: {grid_points[index]})")
+    print(f"Value at risk at {ALPHA*100}%: {grid_points[index]}")
     global VAR
     print("Real VaR", VAR)
     return index
@@ -144,7 +152,9 @@ def value_at_risk(required_alpha, index, calc_alpha_func=calc_alpha):
 
     # Tolerance represents the accuracy of the alpha we aim to get
     while (not np.isclose(alpha_v, required_alpha, atol=TOLERANCE)) and search_size > 0:
-        index = update_index(index, required_alpha, alpha_v, search_size)
+        index = update_index(
+            index, required_alpha, alpha_v, search_size, len(probs) - 1
+        )
         # Binary search, divided by 2 - as we know the function is always growing in that part of the graph.
         search_size = search_size // 2
         v = grid_points[index]
@@ -376,6 +386,43 @@ def iqae_epsilon_sweep(epsilons, alpha=0.01, runs=1, output_path="results/iqae_e
         writer.writerows(rows)
 
 
+def classical_var_convergence(
+    sample_sizes,
+    runs=20,
+    alpha=ALPHA,
+    output_path="results/classical_var_convergence.csv",
+    seed=1234,
+):
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    rng = np.random.default_rng(seed)
+    rows = []
+    for n in sample_sizes:
+        for run in range(runs):
+            samples = rng.normal(loc=mu, scale=sigma, size=int(n))
+            var_estimate = float(np.quantile(samples, alpha))
+            rows.append(
+                {
+                    "sample_size": int(n),
+                    "run": run,
+                    "var_estimate": var_estimate,
+                    "abs_error": abs(var_estimate - VAR),
+                }
+            )
+
+    fieldnames = ["sample_size", "run", "var_estimate", "abs_error"]
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 if __name__ == "__main__":
-    epsilons = [0.2, 0.1, 0.07, 0.05, 0.03, 0.02, 0.01]
-    iqae_epsilon_sweep(epsilons=epsilons, alpha=0.01, runs=1)
+    epsilons = [
+        0.3, 0.25, 0.2, 0.17, 0.14, 0.12, 0.1, 0.085,
+        0.07, 0.06, 0.05, 0.04, 0.03, 0.025, 0.02, 0.015, 0.01
+    ]
+    iqae_epsilon_sweep(epsilons=epsilons, alpha=0.01, runs=5)
+
+    sizes = sorted({int(s) for s in np.logspace(2, 5, 25)})
+    classical_var_convergence(sample_sizes=sizes, runs=20)
