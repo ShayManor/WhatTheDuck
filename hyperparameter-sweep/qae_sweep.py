@@ -307,11 +307,11 @@ def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
     """
     from qiskit_aer.primitives import Sampler
 
-    backend_options = {"method": method, "seed_simulator": int(seed)}
+    backend_options = {"method": method}
     if device.upper() == "GPU":
         backend_options["device"] = "GPU"
 
-    run_options = {"shots": int(default_shots)}
+    run_options = {"shots": int(default_shots), "seed": int(seed)}
 
     return Sampler(backend_options=backend_options, run_options=run_options)
 
@@ -618,47 +618,115 @@ def solve_var_bisect_quantum(
         max_steps: int,
 ) -> Tuple[float, int, int]:
     """
-    Bisection on threshold index using IAE-estimated tail probability.
-
-    Tail definition matches your existing code: p = P(asset_index < threshold_index).
+    Parallel bisection on threshold index using IAE-estimated tail probability.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     n = len(grid_points)
     num_asset_qubits = int(round(math.log2(n)))
     if 2 ** num_asset_qubits != n:
         raise ValueError("grid_points length must be power of 2")
 
-    lo, hi = 0, n
     total_cost = 0
+    cache = {}  # Cache results to avoid recomputation
 
-    # Cache A(threshold) circuits would require caching inside _estimate_tail_prob_iae;
-    # keeping it simple here; main speedup is eliminating Classiq synthesis per call.
-    for _ in range(int(max_steps)):
-        if lo >= hi:
-            break
-        mid = (lo + hi) // 2
-
+    def estimate_at(idx: int) -> Tuple[int, EstResult]:
+        if idx in cache:
+            return idx, cache[idx]
         est = _estimate_tail_prob_iae(
             sampler_v2=sampler_v2,
             stateprep_asset_only=stateprep_asset_only,
             num_asset_qubits=num_asset_qubits,
-            threshold_index=mid,
+            threshold_index=idx,
             epsilon=epsilon,
             alpha_fail=alpha_fail,
         )
-        total_cost += est.cost_oracle_queries
+        cache[idx] = est
+        return idx, est
 
-        if alpha_target > est.ci_high + prob_tol:
-            lo = mid + 1
-        elif alpha_target < est.ci_low - prob_tol:
-            hi = mid
+    # Phase 1: Parallel probe to find initial range
+    num_probes = min(7, n // 2)
+    probe_indices = [int(n * (i + 1) / (num_probes + 1)) for i in range(num_probes)]
+
+    with ThreadPoolExecutor(max_workers=num_probes) as pool:
+        futures = [pool.submit(estimate_at, idx) for idx in probe_indices]
+        for f in as_completed(futures):
+            idx, est = f.result()
+            total_cost += est.cost_oracle_queries
+
+    # Find initial bounds from probes
+    lo, hi = 0, n
+    sorted_probes = sorted(cache.keys())
+    for idx in sorted_probes:
+        est = cache[idx]
+        if est.p_hat < alpha_target - prob_tol:
+            lo = max(lo, idx)
+        elif est.p_hat > alpha_target + prob_tol:
+            hi = min(hi, idx)
+
+    # Phase 2: Parallel narrowing - test multiple points simultaneously
+    for step in range(max_steps):
+        if hi - lo <= 1:
+            break
+
+        # Generate multiple test points within range
+        gap = hi - lo
+        if gap <= 4:
+            test_points = [lo + gap // 2]
         else:
-            if est.p_hat < alpha_target:
-                lo = mid + 1
-            else:
-                hi = mid
-    t_hat = lo
-    idx_hat = max(0, t_hat - 1)
+            # Test 3 points in parallel: 1/4, 1/2, 3/4 of range
+            test_points = [
+                lo + gap // 4,
+                lo + gap // 2,
+                lo + 3 * gap // 4,
+            ]
 
+        # Filter out already-cached points
+        test_points = [p for p in test_points if p not in cache and lo < p < hi]
+
+        if not test_points:
+            # All points cached, just do single midpoint
+            mid = (lo + hi) // 2
+            if mid not in cache:
+                test_points = [mid]
+            else:
+                est = cache[mid]
+                if est.p_hat < alpha_target:
+                    lo = mid + 1
+                else:
+                    hi = mid
+                continue
+
+        # Parallel estimation
+        with ThreadPoolExecutor(max_workers=len(test_points)) as pool:
+            futures = [pool.submit(estimate_at, idx) for idx in test_points]
+            for f in as_completed(futures):
+                idx, est = f.result()
+                total_cost += est.cost_oracle_queries
+
+        # Update bounds based on all new results
+        for idx in sorted(test_points):
+            est = cache[idx]
+            if est.p_hat < alpha_target - prob_tol:
+                lo = max(lo, idx + 1)
+            elif est.p_hat > alpha_target + prob_tol:
+                hi = min(hi, idx)
+
+    # Final refinement if needed
+    if hi - lo > 1:
+        mid = (lo + hi) // 2
+        if mid not in cache:
+            _, est = estimate_at(mid)
+            total_cost += est.cost_oracle_queries
+        else:
+            est = cache[mid]
+
+        if est.p_hat < alpha_target:
+            lo = mid + 1
+        else:
+            hi = mid
+
+    idx_hat = max(0, lo - 1)
     return grid_points[idx_hat], idx_hat, total_cost
 
 
