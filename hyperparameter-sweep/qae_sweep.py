@@ -326,65 +326,43 @@ def _build_threshold_stateprep(
 
 
 def _estimate_tail_prob_iae(
-    *,
-    sampler_v2,
-    stateprep_asset_only,
-    num_asset_qubits: int,
-    threshold_index: int,
-    epsilon: float,
-    alpha_fail: float,
+        *,
+        sampler_v2,  # Will actually pass backend instead
+        stateprep_asset_only,
+        num_asset_qubits: int,
+        threshold_index: int,
+        epsilon: float,
+        alpha_fail: float,
 ) -> EstResult:
-    """
-    Run iterative amplitude estimation for this threshold index.
-    Returns p_hat, CI, and oracle-query cost (as reported by Qiskit result when available).
-    """
-    # Newer package
-    try:
-        from qiskit_algorithms import IterativeAmplitudeEstimation, EstimationProblem
-    except Exception:
-        # Older layouts (best-effort compatibility)
-        from qiskit.algorithms import IterativeAmplitudeEstimation, EstimationProblem  # type: ignore
+    from qiskit_algorithms import IterativeAmplitudeEstimation, EstimationProblem
+    from qiskit.utils import QuantumInstance
 
     A, obj = _build_threshold_stateprep(
         stateprep_asset_only=stateprep_asset_only,
         num_asset_qubits=num_asset_qubits,
         threshold_index=threshold_index,
     )
-    print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
-
 
     problem = EstimationProblem(state_preparation=A, objective_qubits=[obj])
+
+    # Use QuantumInstance instead of Sampler for older versions
+    qi = QuantumInstance(sampler_v2, shots=sampler_v2._shots)  # sampler_v2 is actually backend
 
     iae = IterativeAmplitudeEstimation(
         epsilon_target=float(epsilon),
         alpha=float(alpha_fail),
-        sampler=sampler_v2,
+        quantum_instance=qi,
     )
 
-    # API can be estimate() or run() depending on version.
-    if hasattr(iae, "estimate"):
-        res = iae.estimate(problem)
-    else:
-        res = iae.run(problem)  # type: ignore
-    print(f"    IAE result type: {type(res)}, attrs: {dir(res)}")
-    print(f"    Result: {res}")
-    # Extract estimation and CI
-    p_hat = float(getattr(res, "estimation", getattr(res, "estimation_processed", np.nan)))
-    ci = getattr(res, "confidence_interval", None)
-    if ci is None:
-        # Some versions store it under "confidence_interval_processed"
-        ci = getattr(res, "confidence_interval_processed", (0.0, 1.0))
+    res = iae.estimate(problem)
+
+    # Extract results
+    p_hat = float(res.estimation)
+    ci = res.confidence_interval
     ci_low, ci_high = float(ci[0]), float(ci[1])
+    cost = int(res.num_oracle_queries)
 
-    # Cost: prefer official attribute if present
-    cost = getattr(res, "num_oracle_queries", None)
-    if cost is None:
-        cost = getattr(res, "num_queries", None)
-    if cost is None:
-        cost = 0
-
-    return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=int(cost))
-
+    return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=cost)
 
 def solve_var_bisect_quantum(
     *,
