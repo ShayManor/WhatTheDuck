@@ -897,7 +897,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             err = abs(var_hat - dd["ref_var"]) / (abs(dd["ref_var"]) + 1e-9)
             return dd["name"], var_hat, dd["ref_var"], err, cost
 
-        with ProcessPoolExecutor(max_workers=min(len(dist_items), 8)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(dist_items), 8)) as pool:
             futures = [pool.submit(run_dist, dd) for dd in dist_items]
             results = [f.result() for f in as_completed(futures)]
 
