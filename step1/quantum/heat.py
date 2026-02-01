@@ -117,7 +117,7 @@ def create_professional_heatmap(
     ax.set_ylabel('IQAE Precision (ε)', fontsize=14, fontweight='bold')
     
     # Format tick labels
-    ax.set_xticklabels([f'{x:.2f}' for x in confidence_vals], rotation=0)
+    ax.set_xticklabels([f'{x:.3f}' for x in confidence_vals], rotation=0)
     ax.set_yticklabels([f'{y:.3f}' for y in epsilon_vals], rotation=0)
     
     # Title
@@ -178,7 +178,7 @@ def create_comparison_heatmaps(
     ax1.set_xlabel('Confidence Level (1 - α)', fontsize=12, fontweight='bold')
     ax1.set_ylabel('IQAE Precision (ε)', fontsize=12, fontweight='bold')
     ax1.set_title('(a) Measurement Shots Required', fontsize=14, fontweight='bold', pad=15)
-    ax1.set_xticklabels([f'{x:.2f}' for x in confidence_vals], rotation=0)
+    ax1.set_xticklabels([f'{x:.3f}' for x in confidence_vals], rotation=0)
     ax1.set_yticklabels([f'{y:.3f}' for y in epsilon_vals], rotation=0)
     
     # Right plot: Grover calls
@@ -198,7 +198,7 @@ def create_comparison_heatmaps(
     ax2.set_xlabel('Confidence Level (1 - α)', fontsize=12, fontweight='bold')
     ax2.set_ylabel('IQAE Precision (ε)', fontsize=12, fontweight='bold')
     ax2.set_title('(b) Grover Operator Calls Required', fontsize=14, fontweight='bold', pad=15)
-    ax2.set_xticklabels([f'{x:.2f}' for x in confidence_vals], rotation=0)
+    ax2.set_xticklabels([f'{x:.3f}' for x in confidence_vals], rotation=0)
     ax2.set_yticklabels([f'{y:.3f}' for y in epsilon_vals], rotation=0)
     
     # Overall title
@@ -246,7 +246,7 @@ def create_accuracy_heatmap(
     sns.heatmap(
         pivot_df,
         annot=True,
-        fmt='.2f',
+        fmt='.3f',
         cmap='RdYlGn_r',
         cbar_kws={'label': 'Absolute % Error', 'pad': 0.02},
         linewidths=0.5,
@@ -266,7 +266,7 @@ def create_accuracy_heatmap(
         fontweight='bold',
         pad=20
     )
-    ax.set_xticklabels([f'{x:.2f}' for x in confidence_vals], rotation=0)
+    ax.set_xticklabels([f'{x:.3f}' for x in confidence_vals], rotation=0)
     ax.set_yticklabels([f'{y:.3f}' for y in epsilon_vals], rotation=0)
     
     plt.tight_layout()
@@ -354,10 +354,10 @@ def create_all_visualizations(
             (df_clean['VaR_predicted'] - df_clean['VaR_theoretical']) / df_clean['VaR_theoretical'] * 100
         )
         print(f"\nVaR Prediction Error (%):")
-        print(f"  Min: {abs_pct_error.min():.2f}%")
-        print(f"  Max: {abs_pct_error.max():.2f}%")
-        print(f"  Mean: {abs_pct_error.mean():.2f}%")
-        print(f"  Median: {abs_pct_error.median():.2f}%")
+        print(f"  Min: {abs_pct_error.min():.3f}%")
+        print(f"  Max: {abs_pct_error.max():.3f}%")
+        print(f"  Mean: {abs_pct_error.mean():.3f}%")
+        print(f"  Median: {abs_pct_error.median():.3f}%")
     
     print("\n" + "="*60)
     print("✓ All visualizations complete!")
