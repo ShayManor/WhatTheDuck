@@ -571,16 +571,16 @@ def cmd_run(args: argparse.Namespace) -> None:
         alpha_fail = trial.suggest_float("alpha_fail", 0.001, 0.05, log=True)
         prob_tol_mult = trial.suggest_float("prob_tol_mult", 0.05, 0.3)
 
-        cdf = np.cumsum(dd["probs"])
-        min_cdf_gap = np.min(np.diff(cdf[cdf > 0]))  # Smallest non-zero CDF step
-        prob_tol = max(0.5 * min_cdf_gap, 0.005)  # At least 0.5% or half the gap
-        print(f"DEBUG: prob_tol={prob_tol:.6f}, min_cdf_gap={min_cdf_gap:.6f}")
-
         total_cost = 0.0
         total_err = 0.0
         max_err = 0.0
 
         for i, dd in enumerate(dist_items):
+            cdf = np.cumsum(dd["probs"])
+            min_cdf_gap = np.min(np.diff(cdf[cdf > 0]))  # Smallest non-zero CDF step
+            prob_tol = max(0.5 * min_cdf_gap, 0.005)  # At least 0.5% or half the gap
+            print(f"DEBUG: prob_tol={prob_tol:.6f}, min_cdf_gap={min_cdf_gap:.6f}")
+
             var_hat, _, cost = solve_var_bisect_quantum(
                 sampler_v2=sampler_v2,
                 stateprep_asset_only=dd["stateprep"],
