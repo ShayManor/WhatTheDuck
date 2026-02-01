@@ -346,6 +346,13 @@ def _build_threshold_stateprep(
     #
     # objective_index = obj_wire[0]
     # return qc_transpiled, objective_index
+    # objective_index = obj_wire[0]
+    # return qc, objective_index
+    prev_depth = 0
+    while qc.depth() != prev_depth:
+        prev_depth = qc.depth()
+        qc = qc.decompose()
+
     objective_index = obj_wire[0]
     return qc, objective_index
 
