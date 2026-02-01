@@ -352,10 +352,15 @@ def _estimate_tail_prob_iae(
     )
     print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
 
+    def good_state_check(bitstr):
+        print(f"    BITSTR: {bitstr!r}, len={len(bitstr)}, obj={obj}")
+        # Qiskit little-endian: qubit 0 is rightmost, so qubit `obj` is at position -(obj+1)
+        return bitstr[-(obj + 1)] == "1"
+
     problem = EstimationProblem(
         state_preparation=A,
         objective_qubits=[obj],
-        is_good_state=lambda bitstr: bitstr[obj] == "1",
+        is_good_state=good_state_check,
     )
 
     iae = IterativeAmplitudeEstimation(
