@@ -478,7 +478,7 @@ def solve_var_bisect_quantum(
     if 2 ** num_asset_qubits != n:
         raise ValueError("grid_points length must be power of 2")
 
-    lo, hi = 0, n - 1
+    lo, hi = 0, n
     total_cost = 0
 
     # Cache A(threshold) circuits would require caching inside _estimate_tail_prob_iae;
@@ -507,8 +507,11 @@ def solve_var_bisect_quantum(
                 lo = mid + 1
             else:
                 hi = mid
+    t_hat = lo
+    idx_hat = max(0, t_hat - 1)
 
-    return float(grid_points[lo]), int(lo), int(total_cost)
+    return grid_points[idx_hat], idx_hat, total_cost
+
 
 
 def cmd_run(args: argparse.Namespace) -> None:
