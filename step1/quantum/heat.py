@@ -367,7 +367,7 @@ def create_all_visualizations(
 if __name__ == "__main__":
     # Generate all visualizations
     create_all_visualizations(
-        csv_path="results/var_sweep.csv",
+        csv_path="results/var_sweep_01.csv",
         output_dir="results",
         dpi=300  # High resolution for presentations
     )
