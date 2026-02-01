@@ -14,7 +14,7 @@ if __name__ == '__main__':
     seed = 42
 
     n_samples_list = np.unique(np.logspace(1, 6, 100).astype(int))  # 100 points
-    epsilons = np.logspace(-2.5, -0.3, 50)  # 50 points
+    epsilons = np.clip(np.logspace(-2.5, -0.3, 50), a_min=1e-6, a_max=0.49)
 
     # Load
     precompiled = {}
