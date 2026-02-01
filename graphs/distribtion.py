@@ -40,11 +40,11 @@ sigma = 0.20                   # Daily volatility (20%)
 confidence_level = 0.95        # VaR confidence level
 
 # Multi-day and distribution settings
-T = 5                          # Number of days for multi-day VaR
+T = 4                          # Number of days for multi-day VaR
 dist = "gaussian"              # Distribution: "gaussian", "student-t", "skewnorm"
 df = 3                         # Degrees of freedom for Student-t
 skew_alpha = 7.0               # Skew parameter for skew-normal
-rho = 0.6                      # AR(1) correlation coefficient
+rho = 0.3                      # AR(1) correlation coefficient
 
 # Simulation settings
 theoretical_N = 10**7 * 2 # Samples for theoretical VaR estimation
