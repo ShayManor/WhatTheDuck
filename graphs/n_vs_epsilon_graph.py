@@ -56,7 +56,7 @@ COLOR_QC = '#bf616a'
 # ]
 
 CSV_INPUT1 = "data/monte_carlo_naive.csv"
-CSV_INPUT2 = "data/iqae_converted.csv"
+CSV_INPUT2 = "data/monte_carlo_bisect.csv"
 OUTPUT = "output/n_vs_epsilon.png"
 
 results_mc = pd.read_csv(CSV_INPUT1)
