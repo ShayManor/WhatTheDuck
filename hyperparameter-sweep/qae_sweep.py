@@ -363,10 +363,11 @@ def _estimate_tail_prob_iae(
     )
 
     # API can be estimate() or run() depending on version.
-    if hasattr(iae, "estimate"):
-        res = iae.estimate(problem)
-    else:
-        res = iae.run(problem)  # type: ignore
+    # if hasattr(iae, "estimate"):
+    res = iae.estimate(problem)
+    print(f"    DEBUG: powers={getattr(res, 'powers', None)}, shots={getattr(res, 'shots', None)}")
+    # else:
+    #     res = iae.run(problem)  # type: ignore
     # Extract estimation and CI
     p_hat = float(getattr(res, "estimation", getattr(res, "estimation_processed", np.nan)))
     ci = getattr(res, "confidence_interval", None)
