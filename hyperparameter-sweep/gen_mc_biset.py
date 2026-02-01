@@ -66,7 +66,9 @@ class MonteCarloResult:
     error: float
 
 results = []    
-epsilon_values = np.logspace(-1, -4, num=20)  # From 0.1 to 0.0001
+E_MAX = 0.1
+E_MIN = 0.001
+epsilon_values = np.logspace(np.log10(E_MAX), np.log10(E_MIN), num=10)
 mc_results = []
 with alive_progress.alive_bar(len(epsilon_values)) as bar:
 	for epsilon in epsilon_values:
