@@ -7,9 +7,9 @@ def estimate_var_classical(
         probs: np.ndarray,
         grid_points: np.ndarray,
         alpha: float = 0.05,
+        epsilon: float = 0.05,
         seed: int = 42,
         # Best hyperparameters from sweep
-        budget: int = 500,
         confidence: float = 0.9902103982255026,
         method: str = "is_qmc",
         tilt_tau: float = 0.1154157949440764,
@@ -23,9 +23,9 @@ def estimate_var_classical(
     Args:
         probs: Discretized probability distribution
         grid_points: Corresponding grid values
+        epsilon: Epsilon value
         alpha: Target tail probability (e.g., 0.05 for 5% VaR)
         seed: Random seed
-        budget: Samples per bisection step
         confidence: CI confidence level
         method: Sampling method ("is_qmc", "plain", "stratified", etc.)
         tilt_tau: IS exponential tilting parameter
@@ -43,6 +43,11 @@ def estimate_var_classical(
     """
     if prob_tol is None:
         prob_tol = alpha / 10.0
+
+    z = st.norm.ppf(1 - (1 - confidence) / 2)
+    p_est = alpha  # or use 0.5 for worst-case
+    budget = int(np.ceil(z ** 2 * p_est * (1 - p_est) / epsilon ** 2))
+    budget = max(budget, 100)
 
     estimator = ClassicalDiscreteMC(probs)
 
@@ -77,8 +82,10 @@ def estimate_var_classical(
         "trace": trace,
     }
 
+
 if __name__ == '__main__':
     import scipy.stats as st
+
     grid, probs = get_distribution("pareto", num_points=512, shape=2.5, scale=1.0)
     true_var = st.pareto.ppf(0.05, b=2.5, scale=1.0)
     result = estimate_var_classical(probs, grid, alpha=0.05, seed=123)

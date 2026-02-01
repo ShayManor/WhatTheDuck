@@ -8,9 +8,8 @@ import numpy as np
 import optuna
 import scipy.stats as st
 
-from quantum_estimator import QuantumIQAECDF, ProbEstimate
-from classiq_to_cuda import synthesize_to_qasm, qasm_to_cudaq, classiq_to_qasm
-
+from quantum_estimator import ProbEstimate
+from quantum_iqae import estimate_var_quantum
 TailMode = Literal["pnl_leq", "loss_geq"]
 
 
@@ -928,54 +927,118 @@ def main():
             avg_err = total_err / len(dist_data)
             return avg_cost + 1e6 * avg_err + 1e5 * max_err
     else:
+        TEST_DISTRIBUTIONS = [
+            {"dist": "lognormal", "mu": 0.7, "sigma": 0.13},
+            {"dist": "normal", "mu": 0.0, "sigma": 1.0},
+            {"dist": "exponential", "lam": 1.0},
+            {"dist": "pareto", "shape": 2.5, "scale": 1.0},
+            {"dist": "student_t", "df": 3.0, "loc": 0.0, "scale": 1.0},
+            {"dist": "skew_normal", "skew": 4.0, "loc": 0.0, "scale": 1.0},
+            {"dist": "beta", "a": 2.0, "b": 5.0},
+            {"dist": "mixture"},
+        ]
 
-        est = QuantumIQAECDF(probs, num_qubits=args.num_qubits)
-        est.GLOBAL_INDEX = 42
-        if args.compile:
-            # Synthesize (requires Classiq auth - do once)
-            qasm = est.synthesize_to_qasm(ref_idx)
-            with open("circuit.qasm", "w") as f:
-                f.write(qasm)
-            print(f"Saved circuit.qasm for threshold_index={ref_idx}")
-            return
-
-        # with open("circuit.qasm") as f:
-        #     qasm = f.read()
-
-        # Convert to CUDA-Q kernel (works offline)
-        # kernel = qasm_to_cudaq(qasm)
-
-        # Run with CUDA-Q
-        # import cudaq
-        # cudaq.set_target("nvidia")
-        # result = cudaq.sample(kernel, shots_count=1000)
-
-        def estimator(q: TailQuery, **kw):
-            return est.estimate_tail_prob(q, **kw)
+        dist_data = []
+        for d in TEST_DISTRIBUTIONS:
+            gp, pr = get_distribution(
+                d["dist"],
+                2 ** args.num_qubits,
+                mu=d.get("mu", 0.0),
+                sigma=d.get("sigma", 1.0),
+                lam=d.get("lam", 1.0),
+                shape=d.get("shape", 2.5),
+                scale=d.get("scale", 1.0),
+                a=d.get("a", 2.0),
+                b=d.get("b", 5.0),
+                df=d.get("df", 3.0),
+                skew=d.get("skew", 4.0),
+                loc=d.get("loc", 0.0),
+            )
+            cdf = np.cumsum(pr)
+            ref_idx = int(np.searchsorted(cdf, args.alpha, side="left"))
+            ref_var = float(gp[ref_idx])
+            dist_data.append({
+                "name": d["dist"],
+                "grid": gp,
+                "probs": pr,
+                "ref_idx": ref_idx,
+                "ref_var": ref_var,
+            })
 
         sampler = optuna.samplers.TPESampler(seed=args.seed)
-        pruner = optuna.pruners.MedianPruner(n_startup_trials=8)
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=20)
 
         def objective(trial: optuna.Trial):
-            epsilon = trial.suggest_float("epsilon", 0.01, 0.2, log=True)
-            alpha_fail = trial.suggest_float("alpha_fail", 1e-3, 0.1, log=True)
-            var, vidx, cost, _ = solve_var_bisect(
-                estimator,
-                alpha_target=args.alpha,
-                tail_mode="pnl_leq",
-                grid_points=grid_points,
-                lo_index=0,
-                hi_index=len(grid_points) - 1,
-                prob_tol=prob_tol,
-                value_tol=args.value_tol,
-                max_steps=args.max_steps,
-                est_params={"epsilon": epsilon, "alpha": alpha_fail, "seed": args.seed + trial.number},
-            )
-            err = abs(var - ref_var)
-            trial.report(err, step=0)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-            return cost + (1e9 * max(0.0, err - args.tau)) if args.tau > 0 else cost + 1e6 * err
+            # Quantum hyperparameters
+            epsilon = trial.suggest_float("epsilon", 0.01, 0.15)
+            alpha_fail = trial.suggest_float("alpha_fail", 0.001, 0.05, log=True)
+            bound = trial.suggest_float("bound", 0.0, 0.15, log=True)
+            max_width = trial.suggest_int("max_width", 20, 40, log=True)
+            max_depth = trial.suggest_int("max_depth", 500, 5000, log=True)
+            prob_tol_mult = trial.suggest_float("prob_tol_mult", 0.05, 0.3)
+            initial_frac = trial.suggest_float("initial_frac", 0.1, 0.5)
+            adaptive_eps = trial.suggest_categorical("adaptive_eps", [True, False])
+
+            if adaptive_eps:
+                eps_start = trial.suggest_float("eps_start", epsilon, epsilon * 4)
+                eps_end = trial.suggest_float("eps_end", epsilon * 0.5, epsilon)
+            else:
+                eps_start = None
+                eps_end = None
+
+            NUM_SEEDS = 1
+
+            total_cost = 0.0
+            total_err = 0.0
+            max_err = 0.0
+
+            for i, dd in enumerate(dist_data):
+                dist_cost = 0.0
+                dist_err = 0.0
+
+                for seed_offset in range(NUM_SEEDS):
+                    try:
+                        res = estimate_var_quantum(
+                            probs=dd["probs"],
+                            grid_points=dd["grid"],
+                            alpha=args.alpha,
+                            epsilon=epsilon,
+                            alpha_fail=alpha_fail,
+                            bound=bound,
+                            max_width=max_width,
+                            max_depth=max_depth,
+                            prob_tol=args.alpha * prob_tol_mult,
+                            initial_frac=initial_frac,
+                            adaptive_eps=adaptive_eps,
+                            eps_start=eps_start,
+                            eps_end=eps_end,
+                            max_steps=args.max_steps,
+                        )
+
+                        var = res.var
+                        cost = res.total_oracle_calls
+                    except Exception as e:
+                        print(f"Quantum trial failed: {e}")
+                        return float("inf")
+
+                    err = abs(var - dd["ref_var"]) / (abs(dd["ref_var"]) + 1e-9)
+                    dist_cost += cost
+                    dist_err += err
+
+                dist_cost /= NUM_SEEDS
+                dist_err /= NUM_SEEDS
+
+                total_cost += dist_cost
+                total_err += dist_err
+                max_err = max(max_err, dist_err)
+
+                trial.report(total_cost / (i + 1), step=i)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
+            avg_cost = total_cost / len(dist_data)
+            avg_err = total_err / len(dist_data)
+            return avg_cost + 1e6 * avg_err + 1e5 * max_err
 
     study = optuna.create_study(direction="minimize", sampler=sampler, pruner=pruner)
     study.optimize(objective, n_trials=args.trials)
