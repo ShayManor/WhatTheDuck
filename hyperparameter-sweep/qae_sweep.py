@@ -578,7 +578,12 @@ def cmd_run(args: argparse.Namespace) -> None:
         for i, dd in enumerate(dist_items):
             cdf = np.cumsum(dd["probs"])
             min_cdf_gap = np.min(np.diff(cdf[cdf > 0]))  # Smallest non-zero CDF step
-            prob_tol = max(0.5 * min_cdf_gap, 0.005)  # At least 0.5% or half the gap
+            diffs = np.diff(np.unique(cdf))
+            min_pos_gap = diffs[diffs > 0].min() if np.any(diffs > 0) else 0.0
+
+            base_tol = max(0.5 * min_pos_gap, 0.005)
+            prob_tol = prob_tol_mult * base_tol
+
             print(f"DEBUG: prob_tol={prob_tol:.6f}, min_cdf_gap={min_cdf_gap:.6f}")
             var_hat, _, cost = solve_var_bisect_quantum(
                 sampler_v2=sampler_v2,
@@ -663,7 +668,7 @@ def main() -> None:
 
     # Aer options (GPU node)
     apr.add_argument("--device", type=str, default="GPU", choices=["CPU", "GPU"])
-    apr.add_argument("--method", type=str, default="statevector", help="Aer simulation method (e.g., statevector)")
+    apr.add_argument("--method", type=str, default="automatic", help="Aer simulation method (e.g., statevector)")
     apr.add_argument("--shots", type=int, default=20000, help="Default shots for SamplerV2")
 
     apr.add_argument("--out", type=str, default="best_algo_params.json")
