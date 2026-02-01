@@ -245,6 +245,22 @@ class EstResult:
 
 
 def _load_stateprep_qasm(qasm_path: Path):
+    import qiskit.qasm2 as qasm2
+    qc = qasm2.load(str(qasm_path))
+
+    # Remove measurements if any
+    if qc.num_clbits > 0:
+        qc.remove_final_measurements(inplace=True)
+
+    # CRITICAL: Decompose custom gates to basis gates
+    # Repeat until no more custom gates remain
+    prev_depth = 0
+    while qc.depth() != prev_depth:
+        prev_depth = qc.depth()
+        qc = qc.decompose()
+
+    print(f"    QASM loaded and decomposed: depth={qc.depth()}, gates={qc.size()}")
+    return qc
     """
     Load QASM and decompose to basis gates that Aer understands.
     """
