@@ -62,7 +62,7 @@ if __name__ == '__main__':
 
     classical_args = [(d, n) for d in precompiled for n in n_samples_list]
 
-    with ThreadPoolExecutor(max_workers=256) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         results.extend(tqdm(pool.map(classical_task, classical_args, chunksize=50),
                             total=len(classical_args), desc="Classical"))
 
