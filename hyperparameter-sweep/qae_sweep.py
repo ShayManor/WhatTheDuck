@@ -33,8 +33,8 @@ import scipy.stats as st
 # -----------------------------
 
 def get_log_normal_probabilities(mu: float, sigma: float, num_points: int) -> Tuple[np.ndarray, np.ndarray]:
-    mean = np.exp(mu + sigma**2 / 2)
-    var = (np.exp(sigma**2) - 1) * np.exp(2 * mu + sigma**2)
+    mean = np.exp(mu + sigma ** 2 / 2)
+    var = (np.exp(sigma ** 2) - 1) * np.exp(2 * mu + sigma ** 2)
     std = np.sqrt(var)
     low = max(0.0, mean - 3 * std)
     high = mean + 3 * std
@@ -93,7 +93,8 @@ def get_student_t_probabilities(df: float, loc: float, scale: float, num_points:
     return x, p
 
 
-def get_skew_normal_probabilities(alpha_skew: float, loc: float, scale: float, num_points: int) -> Tuple[np.ndarray, np.ndarray]:
+def get_skew_normal_probabilities(alpha_skew: float, loc: float, scale: float, num_points: int) -> Tuple[
+    np.ndarray, np.ndarray]:
     low = st.skewnorm.ppf(0.001, alpha_skew, loc=loc, scale=scale)
     high = st.skewnorm.ppf(0.999, alpha_skew, loc=loc, scale=scale)
     x = np.linspace(low, high, num_points)
@@ -116,9 +117,11 @@ def get_distribution(dist_name: str, num_points: int, **kwargs: Any) -> Tuple[np
     if dist_name == "beta":
         return get_beta_probabilities(kwargs.get("a", 2.0), kwargs.get("b", 5.0), num_points)
     if dist_name == "student_t":
-        return get_student_t_probabilities(kwargs.get("df", 3.0), kwargs.get("loc", 0.0), kwargs.get("scale", 1.0), num_points)
+        return get_student_t_probabilities(kwargs.get("df", 3.0), kwargs.get("loc", 0.0), kwargs.get("scale", 1.0),
+                                           num_points)
     if dist_name == "skew_normal":
-        return get_skew_normal_probabilities(kwargs.get("skew", 4.0), kwargs.get("loc", 0.0), kwargs.get("scale", 1.0), num_points)
+        return get_skew_normal_probabilities(kwargs.get("skew", 4.0), kwargs.get("loc", 0.0), kwargs.get("scale", 1.0),
+                                             num_points)
     raise ValueError(f"Unknown distribution: {dist_name}")
 
 
@@ -133,13 +136,13 @@ def compute_true_var(grid_points: np.ndarray, probs: np.ndarray, alpha: float) -
 # -----------------------------
 
 def compile_stateprep_to_qasm(
-    *,
-    probs: np.ndarray,
-    num_qubits: int,
-    out_qasm_path: Path,
-    debug_mode: bool = False,
-    qasm3: bool = False,
-    bound: float = 0.0,
+        *,
+        probs: np.ndarray,
+        num_qubits: int,
+        out_qasm_path: Path,
+        debug_mode: bool = False,
+        qasm3: bool = False,
+        bound: float = 0.0,
 ) -> None:
     """
     Synthesize only |0> -> sum_x sqrt(p[x])|x> using Classiq inplace_prepare_state,
@@ -177,7 +180,6 @@ def compile_stateprep_to_qasm(
 
     out_qasm_path.parent.mkdir(parents=True, exist_ok=True)
     out_qasm_path.write_text(qasm_str, encoding="utf-8")
-
 
 
 def cmd_compile(args: argparse.Namespace) -> None:
@@ -312,10 +314,12 @@ def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
     run_options = {"shots": int(default_shots)}
 
     return Sampler(backend_options=backend_options, run_options=run_options)
+
+
 def _build_threshold_stateprep(
-    stateprep_asset_only,
-    num_asset_qubits: int,
-    threshold_index: int,
+        stateprep_asset_only,
+        num_asset_qubits: int,
+        threshold_index: int,
 ):
     """
     Build state-prep + threshold oracle circuit, transpiled for Aer.
@@ -362,15 +366,14 @@ def _build_threshold_stateprep(
     return qc, objective_index
 
 
-
 def _estimate_tail_prob_iae(
-    *,
-    sampler_v2,
-    stateprep_asset_only,
-    num_asset_qubits: int,
-    threshold_index: int,
-    epsilon: float,
-    alpha_fail: float,
+        *,
+        sampler_v2,
+        stateprep_asset_only,
+        num_asset_qubits: int,
+        threshold_index: int,
+        epsilon: float,
+        alpha_fail: float,
 ) -> EstResult:
     print(
         f"    STATEPREP: depth={stateprep_asset_only.depth()}, gates={stateprep_asset_only.size()}, qubits={stateprep_asset_only.num_qubits}")
@@ -437,24 +440,56 @@ def _estimate_tail_prob_iae(
     # )
     from qiskit.circuit.library import GroverOperator
 
+    # A, obj = _build_threshold_stateprep(
+    #     stateprep_asset_only=stateprep_asset_only,
+    #     num_asset_qubits=num_asset_qubits,
+    #     threshold_index=threshold_index,
+    # )
+    # from qiskit import QuantumCircuit
+    #
+    # # Build oracle that flips phase of marked states (objective qubit = |1⟩)
+    # oracle = QuantumCircuit(A.num_qubits)
+    # oracle.z(obj)  # Phase flip on objective qubit
+    #
+    # # Explicit Grover operator: Q = A S_0 A† S_χ
+    # Q = GroverOperator(
+    #     oracle=oracle,
+    #     state_preparation=A,
+    #     reflection_qubits=None,  # Reflect on all qubits
+    #     insert_barriers=False,
+    # )
+    #
+    # problem = EstimationProblem(
+    #     state_preparation=A,
+    #     grover_operator=Q,
+    #     objective_qubits=[obj],
+    # )
+    from qiskit.circuit.library import GroverOperator
+
     A, obj = _build_threshold_stateprep(
         stateprep_asset_only=stateprep_asset_only,
         num_asset_qubits=num_asset_qubits,
         threshold_index=threshold_index,
     )
-    from qiskit import QuantumCircuit
 
-    # Build oracle that flips phase of marked states (objective qubit = |1⟩)
-    oracle = QuantumCircuit(A.num_qubits)
-    oracle.z(obj)  # Phase flip on objective qubit
+    # Oracle: Z on objective qubit (phase flip |1⟩ states)
+    oracle = QuantumCircuit(A.num_qubits, name='Oracle')
+    oracle.z(obj)
 
-    # Explicit Grover operator: Q = A S_0 A† S_χ
+    # The diffusion operator should be: A · (I - 2|0⟩⟨0|)_{asset} · A†
     Q = GroverOperator(
         oracle=oracle,
         state_preparation=A,
-        reflection_qubits=None,  # Reflect on all qubits
+        reflection_qubits=list(range(num_asset_qubits)),  # KEY FIX
         insert_barriers=False,
     )
+
+    # Decompose to basis gates for Aer
+    Q = Q.decompose()
+    while Q.depth() != (prev := Q.depth()) or prev == 0:
+        Q = Q.decompose()
+        if Q.depth() == prev:
+            break
 
     problem = EstimationProblem(
         state_preparation=A,
@@ -467,8 +502,6 @@ def _estimate_tail_prob_iae(
         alpha=float(alpha_fail),
         sampler=sampler_v2,
     )
-
-
     res = iae.estimate(problem)
     p_hat_raw = float(getattr(res, "estimation", np.nan))
     ci = getattr(res, "confidence_interval", (np.nan, np.nan))
@@ -484,25 +517,30 @@ def _estimate_tail_prob_iae(
 
     # Cost: prefer official attribute if present
     cost = getattr(res, "num_oracle_queries", None)
-    if cost is None:
-        cost = getattr(res, "num_queries", None)
-    if cost is None:
-        cost = 0
+    if cost is None or cost == 0:
+        powers = getattr(res, "powers", [])
+        shots_list = getattr(res, "shots", [])
+        if powers and shots_list and len(powers) == len(shots_list):
+            # Each power k uses (2k+1) oracle calls per shot
+            cost = sum((2 * k + 1) * s for k, s in zip(powers, shots_list))
+        else:
+            # estimate from epsilon
+            cost = int(np.ceil(1.0 / epsilon))
 
     return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=int(cost))
 
 
 def solve_var_bisect_quantum(
-    *,
-    sampler_v2,
-    stateprep_asset_only,
-    grid_points: np.ndarray,
-    probs: np.ndarray,
-    alpha_target: float,
-    epsilon: float,
-    alpha_fail: float,
-    prob_tol: float,
-    max_steps: int,
+        *,
+        sampler_v2,
+        stateprep_asset_only,
+        grid_points: np.ndarray,
+        probs: np.ndarray,
+        alpha_target: float,
+        epsilon: float,
+        alpha_fail: float,
+        prob_tol: float,
+        max_steps: int,
 ) -> Tuple[float, int, int]:
     """
     Bisection on threshold index using IAE-estimated tail probability.
@@ -547,7 +585,6 @@ def solve_var_bisect_quantum(
     idx_hat = max(0, t_hat - 1)
 
     return grid_points[idx_hat], idx_hat, total_cost
-
 
 
 def cmd_run(args: argparse.Namespace) -> None:
