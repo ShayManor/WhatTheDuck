@@ -167,6 +167,17 @@ def var_parameter_sweep(
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
+    # Handle file versioning at the start
+    if os.path.exists(output_path):
+        base, ext = os.path.splitext(output_path)
+        base_parts = base.split("_")
+        if base_parts[-1].isdigit():
+            base_parts[-1] = f"{int(base_parts[-1]) + 1:02d}"
+        else:
+            base_parts.append("01")
+        new_base = "_".join(base_parts)
+        output_path = f"{new_base}{ext}"
+    
     # Generate probability distribution
     grid_points, prob_density = get_log_normal_probabilities(mu, sigma, 2**num_qubits)
     probs = (prob_density / np.sum(prob_density)).tolist()
@@ -184,81 +195,76 @@ def var_parameter_sweep(
         "alpha_iqae",
     ]
     
-    rows = []
+    # Open file once and write header
+    csv_file = open(output_path, "w", newline="")
+    writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+    writer.writeheader()
+    csv_file.flush()
     
+    print(f"Writing results to: {output_path}")
     print(f"Starting sweep: {len(epsilons)} epsilons × {len(alpha_vars)} confidence levels")
     
-    for alpha_var in alpha_vars:
-        confidence = 1 - alpha_var
-        print(f"\n=== Confidence Level: {confidence:.3f} ===")
-        
-        # Calculate classical VaR
-        var_theoretical = calculate_classical_var(grid_points, probs, alpha_var)
-        var_index = get_var_index(probs, alpha_var)
-        GLOBAL_INDEX = int(var_index)
-        
-        print(f"Classical VaR: {var_theoretical:.4f} (index {var_index})")
-        
-        # Create IQAE instance for this confidence level
-        iqae = create_iqae_instance(probs, num_qubits)
-        
-        for eps in epsilons:
-            print(f"  epsilon={eps:.3f}...", end=" ")
+    try:
+        for alpha_var in alpha_vars:
+            confidence = 1 - alpha_var
+            print(f"\n=== Alpha: {alpha_var:.3f} (Confidence: {confidence:.3f}) ===")
             
-            try:
-                result = run_iqae_estimation(iqae, epsilon=eps, alpha_iqae=alpha_iqae)
+            # Calculate classical VaR
+            var_theoretical = calculate_classical_var(grid_points, probs, alpha_var)
+            var_index = get_var_index(probs, alpha_var)
+            GLOBAL_INDEX = int(var_index)
+            
+            print(f"Classical VaR: {var_theoretical:.4f} (index {var_index})")
+            
+            # Create IQAE instance for this confidence level
+            iqae = create_iqae_instance(probs, num_qubits)
+            
+            for eps in epsilons:
+                print(f"  epsilon={eps:.3f}...", end=" ", flush=True)
                 
-                # Convert IQAE probability estimate to VaR value
-                # IQAE estimates P(asset < threshold), find corresponding grid point
-                estimated_prob = result["estimation"]
-                var_predicted_index = get_var_index(probs, estimated_prob)
-                var_predicted = grid_points[var_predicted_index]
+                try:
+                    result = run_iqae_estimation(iqae, epsilon=eps, alpha_iqae=alpha_iqae)
+                    
+                    # Convert IQAE probability estimate to VaR value
+                    estimated_prob = result["estimation"]
+                    var_predicted_index = get_var_index(probs, estimated_prob)
+                    var_predicted = grid_points[var_predicted_index]
+                    
+                    row = {
+                        "epsilon": eps,
+                        "confidence_level": confidence,
+                        "shots": result["shots_total"],
+                        "grover_calls": result["grover_calls"],
+                        "VaR_theoretical": var_theoretical,
+                        "VaR_predicted": var_predicted,
+                        "mu": mu,
+                        "sigma": sigma,
+                        "alpha_iqae": alpha_iqae,
+                    }
+                    
+                    print(f"shots={result['shots_total']}, grover_calls={result['grover_calls']}")
+                    
+                except Exception as e:
+                    print(f"ERROR: {e}")
+                    row = {
+                        "epsilon": eps,
+                        "confidence_level": confidence,
+                        "shots": None,
+                        "grover_calls": None,
+                        "VaR_theoretical": var_theoretical,
+                        "VaR_predicted": None,
+                        "mu": mu,
+                        "sigma": sigma,
+                        "alpha_iqae": alpha_iqae,
+                    }
                 
-                rows.append({
-                    "epsilon": eps,
-                    "confidence_level": confidence,
-                    "shots": result["shots_total"],
-                    "grover_calls": result["grover_calls"],
-                    "VaR_theoretical": var_theoretical,
-                    "VaR_predicted": var_predicted,
-                    "mu": mu,
-                    "sigma": sigma,
-                    "alpha_iqae": alpha_iqae,
-                })
-                
-                print(f"shots={result['shots_total']}, grover_calls={result['grover_calls']}")
-                
-            except Exception as e:
-                print(f"ERROR: {e}")
-                rows.append({
-                    "epsilon": eps,
-                    "confidence_level": confidence,
-                    "shots": None,
-                    "grover_calls": None,
-                    "VaR_theoretical": var_theoretical,
-                    "VaR_predicted": None,
-                    "mu": mu,
-                    "sigma": sigma,
-                    "alpha_iqae": alpha_iqae,
-                })
+                # Write row immediately and flush to disk
+                writer.writerow(row)
+                csv_file.flush()
     
-    # Write results
-    # if file exists, don't overwrite, make a new file
-    if os.path.exists(output_path):
-        base, ext = os.path.splitext(output_path)
-        # maybe_postfi
-        base_parts = base.split("_")
-        if base_parts[-1].isdigit():
-            base_parts[-1] = f"{int(base_parts[-1]) + 1:02d}"
-        else:
-            base_parts.append("01")
-        new_base = "_".join(base_parts)
-        output_path = f"{new_base}{ext}"
-
-    with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    finally:
+        # Ensure file is closed even if interrupted
+        csv_file.close()
     
     print(f"\n✓ Results saved to {output_path}")
 
