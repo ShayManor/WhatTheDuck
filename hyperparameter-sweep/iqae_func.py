@@ -91,7 +91,7 @@ if __name__ == '__main__':
 
     quantum_args = [(d, e) for d in precompiled for e in epsilons]
 
-    with ThreadPoolExecutor(max_workers=64) as pool:
+    with ThreadPoolExecutor(max_workers=256) as pool:
         for i, r in enumerate(pool.map(quantum_task, quantum_args, chunksize=4)):
             results.append(r)
             if (i + 1) % 100 == 0:
