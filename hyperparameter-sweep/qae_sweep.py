@@ -399,7 +399,7 @@ def _estimate_tail_prob_iae(
     grover_op = GroverOperator(
         oracle=A_decomposed,
         state_preparation=A_decomposed,
-        reflection_qubits=list(range(A.num_qubits - 1)),  # All except objective
+        reflection_qubits=list(range(num_asset_qubits)),  # All except objective
     )
 
     problem = EstimationProblem(
