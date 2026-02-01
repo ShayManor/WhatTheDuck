@@ -32,7 +32,7 @@ COLOR_THEORETICAL = '#bf616a'
 # ============================================================================
 
 # method,dist,queries,epsilon,p_hat,true_p,error
-CSV = "../data1.csv"
+CSV = "../data2.csv"
 OUTPUT = "./var_convergence.png"
 
 results = pd.read_csv(CSV)
