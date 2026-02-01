@@ -472,32 +472,98 @@ def _estimate_tail_prob_iae(
         threshold_index=threshold_index,
     )
 
-    # Oracle: Z on objective qubit (phase flip |1⟩ states)
-    oracle = QuantumCircuit(A.num_qubits, name='Oracle')
-    oracle.z(obj)
+    # Build Grover operator MANUALLY: Q = A · S_0 · A† · S_χ
+    n_qubits = A.num_qubits
 
-    # The diffusion operator should be: A · (I - 2|0⟩⟨0|)_{asset} · A†
-    Q = GroverOperator(
-        oracle=oracle,
-        state_preparation=A,
-        reflection_qubits=list(range(num_asset_qubits)),  # KEY FIX
-        insert_barriers=False,
-    )
-    print(f"    Q depth={Q.depth()}, Q gates={Q.size()}")
-    print(f"    Q qubits={Q.num_qubits}, reflection_qubits={list(range(num_asset_qubits))}")
+    # S_χ: Oracle - phase flip where objective qubit = |1⟩
+    def build_oracle():
+        oracle = QuantumCircuit(n_qubits, name='S_chi')
+        oracle.z(obj)
+        return oracle
 
-    # Decompose to basis gates for Aer
-    Q = Q.decompose()
-    while Q.depth() != (prev := Q.depth()) or prev == 0:
+    # S_0: Zero-state reflection on asset qubits only
+    # Implements (I - 2|0⟩⟨0|) = X...X · MCZ · X...X
+    def build_zero_reflection():
+        refl = QuantumCircuit(n_qubits, name='S_0')
+        asset_qubits = list(range(num_asset_qubits))
+
+        # X on all asset qubits
+        for q in asset_qubits:
+            refl.x(q)
+
+        # Multi-controlled Z (flip phase of |11...1⟩)
+        if num_asset_qubits == 1:
+            refl.z(0)
+        else:
+            # H on last asset qubit, MCX, H on last
+            refl.h(asset_qubits[-1])
+            refl.mcx(asset_qubits[:-1], asset_qubits[-1])
+            refl.h(asset_qubits[-1])
+
+        # X on all asset qubits
+        for q in asset_qubits:
+            refl.x(q)
+
+        return refl
+
+    # Build Q = A · S_0 · A† · S_χ
+    Q = QuantumCircuit(n_qubits, name='Q')
+
+    # 1. Oracle S_χ
+    Q.compose(build_oracle(), inplace=True)
+
+    # 2. A†
+    Q.compose(A.inverse(), inplace=True)
+
+    # 3. Zero reflection S_0
+    Q.compose(build_zero_reflection(), inplace=True)
+
+    # 4. A
+    Q.compose(A, inplace=True)
+
+    # Decompose to basis gates
+    prev_depth = 0
+    while Q.depth() != prev_depth:
+        prev_depth = Q.depth()
         Q = Q.decompose()
-        if Q.depth() == prev:
-            break
+    print(f"    Q depth={Q.depth()}, Q gates={Q.size()}")
+    print(f"    Q qubits={Q.num_qubits}, asset_qubits={num_asset_qubits}")
 
     problem = EstimationProblem(
         state_preparation=A,
         grover_operator=Q,
         objective_qubits=[obj],
     )
+    # A, obj = _build_threshold_stateprep(
+    #     stateprep_asset_only=stateprep_asset_only,
+    #     num_asset_qubits=num_asset_qubits,
+    #     threshold_index=threshold_index,
+    # )
+    #
+    # # Oracle: Z on objective qubit (phase flip |1⟩ states)
+    # oracle = QuantumCircuit(A.num_qubits, name='Oracle')
+    # oracle.z(obj)
+    #
+    # # The diffusion operator should be: A · (I - 2|0⟩⟨0|)_{asset} · A†
+    # Q = GroverOperator(
+    #     oracle=oracle,
+    #     state_preparation=A,
+    #     reflection_qubits=list(range(num_asset_qubits)),  # KEY FIX
+    #     insert_barriers=False,
+    # )
+    #
+    # # Decompose to basis gates for Aer
+    # Q = Q.decompose()
+    # while Q.depth() != (prev := Q.depth()) or prev == 0:
+    #     Q = Q.decompose()
+    #     if Q.depth() == prev:
+    #         break
+    #
+    # problem = EstimationProblem(
+    #     state_preparation=A,
+    #     grover_operator=Q,
+    #     objective_qubits=[obj],
+    # )
 
     iae = IterativeAmplitudeEstimation(
         epsilon_target=float(epsilon),
