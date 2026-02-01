@@ -385,47 +385,60 @@ def _estimate_tail_prob_iae(
         # Older layouts (best-effort compatibility)
         from qiskit.algorithms import IterativeAmplitudeEstimation, EstimationProblem  # type: ignore
 
+    # A, obj = _build_threshold_stateprep(
+    #     stateprep_asset_only=stateprep_asset_only,
+    #     num_asset_qubits=num_asset_qubits,
+    #     threshold_index=threshold_index,
+    # )
+    # print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
+
+    from qiskit.circuit.library import GroverOperator
+
+    # Explicitly build Grover operator with decomposed circuit
+    # A_decomposed = A.decompose().decompose().decompose()
+    # grover_op = GroverOperator(
+    #     oracle=A_decomposed,
+    #     state_preparation=A_decomposed,
+    #     reflection_qubits=list(range(num_asset_qubits)),  # All except objective
+    # )
+    #
+    # problem = EstimationProblem(
+    #     state_preparation=A,
+    #     grover_operator=grover_op,
+    #     objective_qubits=[obj],
+    #     is_good_state=lambda bitstr: bitstr == "1",
+    # )
+    #
+    # iae = IterativeAmplitudeEstimation(
+    #     epsilon_target=float(epsilon),
+    #     alpha=float(alpha_fail),
+    #     sampler=sampler_v2,
+    # )
     A, obj = _build_threshold_stateprep(
         stateprep_asset_only=stateprep_asset_only,
         num_asset_qubits=num_asset_qubits,
         threshold_index=threshold_index,
     )
-    print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
-
-    from qiskit.circuit.library import GroverOperator
-
-    # Explicitly build Grover operator with decomposed circuit
-    A_decomposed = A.decompose().decompose().decompose()
-    grover_op = GroverOperator(
-        oracle=A_decomposed,
-        state_preparation=A_decomposed,
-        reflection_qubits=list(range(num_asset_qubits)),  # All except objective
-    )
-
     problem = EstimationProblem(
         state_preparation=A,
-        grover_operator=grover_op,
         objective_qubits=[obj],
-        is_good_state=lambda bitstr: bitstr == "1",
+        is_good_state=lambda bitstr: bitstr[obj] == "1"  # Logic check
     )
 
+    # 3. Run IAE
     iae = IterativeAmplitudeEstimation(
         epsilon_target=float(epsilon),
         alpha=float(alpha_fail),
         sampler=sampler_v2,
     )
 
-    # API can be estimate() or run() depending on version.
-    # if hasattr(iae, "estimate"):
+
     res = iae.estimate(problem)
     p_hat_raw = float(getattr(res, "estimation", np.nan))
     ci = getattr(res, "confidence_interval", (np.nan, np.nan))
     print(f"    DEBUG: p_hat={p_hat_raw:.6f}, CI=[{ci[0]:.6f}, {ci[1]:.6f}], threshold_idx={threshold_index}")
     print(f"    DEBUG: powers={getattr(res, 'powers', None)}, shots={getattr(res, 'shots', None)}")
 
-    # else:
-    #     res = iae.run(problem)  # type: ignore
-    # Extract estimation and CI
     p_hat = float(getattr(res, "estimation", getattr(res, "estimation_processed", np.nan)))
     ci = getattr(res, "confidence_interval", None)
     if ci is None:
