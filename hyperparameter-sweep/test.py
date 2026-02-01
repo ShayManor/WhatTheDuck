@@ -200,7 +200,8 @@ def main():
 
         print(f"    step={step:2d} mid={mid:3d}  p_hat={p_hat:.6f}  CI=[{ci_lo:.6f},{ci_hi:.6f}]  -> {decision}")
 
-    idx_hat = lo
+    t_hat = lo
+    idx_hat = max(0, t_hat - 1)
     var_hat = float(grid[idx_hat])
     rel_err = abs(var_hat - ref_var) / (abs(ref_var) + 1e-12)
     print("\n    RESULT")
