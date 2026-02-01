@@ -40,7 +40,7 @@ def get_val(epsilon, alpha=0.05):
 # Market parameters
 mu = 0.15                      # Mean daily return (15%)
 sigma = 0.20                   # Daily volatility (20%)
-confidence_level = 0.95        # VaR confidence level
+# confidence_level = 0.95        # VaR confidence level
 
 # Multi-day and distribution settings
 T = 1                          # Number of days for multi-day VaR
@@ -49,7 +49,8 @@ df = 3                         # Degrees of freedom for Student-t
 skew_alpha = 7.0               # Skew parameter for skew-normal
 rho = 0.0                      # AR(1) correlation coefficient
 
-OUTPUT = '../graphs/data/monte_carlo_bisect.csv'
+# OUTPUT = '../graphs/data/monte_carlo_bisect.csv'
+OUTPUT = '../step1/quantum/results/mc_sweep.csv'
 
 # Make directories for output
 os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
@@ -65,23 +66,28 @@ class MonteCarloResult:
     var_estimate: float
     error: float
 
-results = []    
 E_MAX = 0.1
 E_MIN = 0.001
 epsilon_values = np.logspace(np.log10(E_MAX), np.log10(E_MIN), num=10)
+A_COUNT = 20
+A_MIN = 0.01
+A_MAX = 0.10
+var_alphas = np.linspace(A_MIN, A_MAX, A_COUNT).tolist()
+
 mc_results = []
-with alive_progress.alive_bar(len(epsilon_values)) as bar:
+with alive_progress.alive_bar(len(epsilon_values) * len(var_alphas)) as bar:
 	for epsilon in epsilon_values:
-		var_estimate, theoretical_var, num_samples = get_val(epsilon, alpha=1 - confidence_level)
-		print(f"Epsilon: {epsilon:.6e}, Samples: {num_samples}, VaR Estimate: {var_estimate:.6f}, Theoretical VaR: {theoretical_var:.6f}")
-		mc_results.append(
-			MonteCarloResult(
-				error=epsilon,
-				num_samples=num_samples,
-				var_estimate=var_estimate
-			)
-		)
-		bar()
+          for alpha in var_alphas:
+            var_estimate, theoretical_var, num_samples = get_val(epsilon, alpha=0.05)
+            print(f"Epsilon: {epsilon:.6e}, Samples: {num_samples}, VaR Estimate: {var_estimate:.6f}, Theoretical VaR: {theoretical_var:.6f}")
+            mc_results.append((alpha,
+                MonteCarloResult(
+                    error=epsilon,
+                    num_samples=num_samples,
+                    var_estimate=var_estimate
+                ))
+            )
+            bar()
 
 
 # ============================================================================
@@ -96,13 +102,14 @@ CSV_HEADERS = [
     "mu", "sigma", "confidence_level", "T", "dist", "df", "skew_alpha", "rho"
 ]
 
+
 print(f"\nWriting results to {OUTPUT}...")
 
 # Episilon = error
 with alive_progress.alive_bar(len(mc_results)) as bar:
     with open(OUTPUT, 'w') as f:
         f.write(','.join(CSV_HEADERS) + '\n')
-        for result in mc_results:
+        for alpha, result in mc_results:
             row = [
                 f"{result.error:.6e}",
                 str(result.num_samples),
@@ -110,7 +117,7 @@ with alive_progress.alive_bar(len(mc_results)) as bar:
                 f"{theoretical_var:.6f}",
                 f"{mu:.6f}",
                 f"{sigma:.6f}",
-                f"{confidence_level:.6f}",
+                f"{(1 - alpha):.6f}",
                 str(T),
                 dist,
                 str(df),
