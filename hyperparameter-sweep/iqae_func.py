@@ -4,6 +4,7 @@ import csv
 import time
 
 import numpy as np
+from tqdm import tqdm
 
 from qae_sweep import (
     _make_sampler_v2,
@@ -22,8 +23,8 @@ if __name__ == '__main__':
     indir = Path("build_qasm")
     seed = 42
 
-    n_samples_list = np.unique(np.logspace(1, 7, 300).astype(int))  # Reduced from 500
-    epsilons = np.logspace(-3, -0.3, 80)  # Reduced from 150, narrower range
+    n_samples_list = np.unique(np.logspace(1, 7, 300).astype(int))
+    epsilons = np.logspace(-3, -0.3, 80)
 
     # Load precompiled
     print("Loading circuits...")
@@ -47,7 +48,7 @@ if __name__ == '__main__':
 
     results = []
 
-    # CLASSICAL - max parallelism
+    # CLASSICAL
     print(f"\nClassical: {len(n_samples_list) * len(precompiled)} tasks")
     t0 = time.time()
 
@@ -62,23 +63,24 @@ if __name__ == '__main__':
     classical_args = [(d, n) for d in precompiled for n in n_samples_list]
 
     with ThreadPoolExecutor(max_workers=256) as pool:
-        results.extend(pool.map(classical_task, classical_args, chunksize=50))
+        results.extend(tqdm(pool.map(classical_task, classical_args, chunksize=50),
+                            total=len(classical_args), desc="Classical"))
 
     print(f"Classical: {time.time() - t0:.1f}s")
 
-    # QUANTUM - more workers, GPU handles concurrency
+    # QUANTUM
     print(f"\nQuantum: {len(epsilons) * len(precompiled)} tasks")
     t0 = time.time()
 
-    # Pre-create samplers per distribution to reduce overhead
-    samplers = {d: _make_sampler_v2("GPU", "statevector", seed, 1024) for d in precompiled}
+    quantum_args = [(d, e) for d in precompiled for e in epsilons]
 
 
     def quantum_task(args):
         dist_name, eps = args
         d = precompiled[dist_name]
+        sampler = _make_sampler_v2("GPU", "statevector", seed, 1024)
         est = _estimate_tail_prob_iae(
-            sampler_v2=samplers[dist_name],
+            sampler_v2=sampler,
             stateprep_asset_only=d["stateprep"],
             num_asset_qubits=d["num_qubits"],
             threshold_index=d["ref_idx"],
@@ -89,13 +91,10 @@ if __name__ == '__main__':
                 abs(est.p_hat - d["true_p"]))
 
 
-    quantum_args = [(d, e) for d in precompiled for e in epsilons]
-
-    with ThreadPoolExecutor(max_workers=256) as pool:
-        for i, r in enumerate(pool.map(quantum_task, quantum_args, chunksize=4)):
-            results.append(r)
-            if (i + 1) % 100 == 0:
-                print(f"  {i + 1}/{len(quantum_args)} ({time.time() - t0:.0f}s)")
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        futures = [pool.submit(quantum_task, arg) for arg in quantum_args]
+        for f in tqdm(as_completed(futures), total=len(futures), desc="Quantum", smoothing=0.1):
+            results.append(f.result())
 
     print(f"Quantum: {time.time() - t0:.1f}s")
 
