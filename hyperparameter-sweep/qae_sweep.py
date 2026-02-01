@@ -270,27 +270,21 @@ def _load_stateprep_qasm(qasm_path: Path):
     return qc_decomposed
 
 
-
 def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
     """
-    Create an Aer SamplerV2 configured for GPU when available.
+    Create an Aer Sampler configured for GPU when available.
     """
-    from qiskit_aer.primitives import SamplerV2
+    from qiskit_aer.primitives import Sampler
+    from qiskit_aer import AerSimulator
 
-    options = {
-        "backend_options": {
-            "method": method,
-        },
-        "run_options": {
-            "seed_simulator": int(seed),
-        },
-    }
-    # Aer GPU option convention is backend_options.device = "GPU" (when built with CUDA).
+    backend_options = {"method": method, "seed_simulator": int(seed)}
     if device.upper() == "GPU":
-        options["backend_options"]["device"] = "GPU"
+        backend_options["device"] = "GPU"
 
-    return SamplerV2(default_shots=int(default_shots), seed=int(seed), options=options)
+    backend = AerSimulator(**backend_options)
 
+    # V1 Sampler: pass shots in run_options
+    return Sampler(backend=backend, options={"shots": int(default_shots)})
 
 def _build_threshold_stateprep(
     stateprep_asset_only,
