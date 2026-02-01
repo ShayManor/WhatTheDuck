@@ -584,7 +584,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         avg_cost = total_cost / len(dist_items)
         avg_err = total_err / len(dist_items)
         # same style you used: cost + strong penalty on error
-        return avg_cost + 1e6 * avg_err + 1e5 * max_err
+        return avg_cost / 50000 + 1e6 * avg_err + 1e5 * max_err
 
     sampler = optuna.samplers.TPESampler(seed=args.seed)
     pruner = optuna.pruners.MedianPruner(n_startup_trials=max(5, args.trials // 4))
