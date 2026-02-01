@@ -483,57 +483,91 @@ def _estimate_tail_prob_iae(
 
     # S_0: Zero-state reflection on asset qubits only
     # Implements (I - 2|0⟩⟨0|) = X...X · MCZ · X...X
-    def build_zero_reflection():
-        refl = QuantumCircuit(n_qubits, name='S_0')
-        asset_qubits = list(range(num_asset_qubits))
+    # def build_zero_reflection():
+    #     refl = QuantumCircuit(n_qubits, name='S_0')
+    #     asset_qubits = list(range(num_asset_qubits))
+    #
+    #     # X on all asset qubits
+    #     for q in asset_qubits:
+    #         refl.x(q)
+    #
+    #     # Multi-controlled Z (flip phase of |11...1⟩)
+    #     if num_asset_qubits == 1:
+    #         refl.z(0)
+    #     else:
+    #         # H on last asset qubit, MCX, H on last
+    #         refl.h(asset_qubits[-1])
+    #         refl.mcx(asset_qubits[:-1], asset_qubits[-1])
+    #         refl.h(asset_qubits[-1])
+    #
+    #     # X on all asset qubits
+    #     for q in asset_qubits:
+    #         refl.x(q)
+    #
+    #     return refl
+    #
+    # # Build Q = A · S_0 · A† · S_χ
+    # Q = QuantumCircuit(n_qubits, name='Q')
+    #
+    # # 1. Oracle S_χ
+    # Q.compose(build_oracle(), inplace=True)
+    #
+    # # 2. A†
+    # Q.compose(A.inverse(), inplace=True)
+    #
+    # # 3. Zero reflection S_0
+    # Q.compose(build_zero_reflection(), inplace=True)
+    #
+    # # 4. A
+    # Q.compose(A, inplace=True)
+    #
+    # # Decompose to basis gates
+    # prev_depth = 0
+    # while Q.depth() != prev_depth:
+    #     prev_depth = Q.depth()
+    #     Q = Q.decompose()
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import GroverOperator
 
-        # X on all asset qubits
-        for q in asset_qubits:
-            refl.x(q)
+    A, obj = _build_threshold_stateprep(
+        stateprep_asset_only=stateprep_asset_only,
+        num_asset_qubits=num_asset_qubits,
+        threshold_index=threshold_index,
+    )
 
-        # Multi-controlled Z (flip phase of |11...1⟩)
-        if num_asset_qubits == 1:
-            refl.z(0)
-        else:
-            # H on last asset qubit, MCX, H on last
-            refl.h(asset_qubits[-1])
-            refl.mcx(asset_qubits[:-1], asset_qubits[-1])
-            refl.h(asset_qubits[-1])
+    # Phase oracle S_χ: flip phase on "good" states (objective qubit = 1)
+    oracle = QuantumCircuit(A.num_qubits, name="S_chi")
+    oracle.z(obj)
 
-        # X on all asset qubits
-        for q in asset_qubits:
-            refl.x(q)
-
-        return refl
-
-    # Build Q = A · S_0 · A† · S_χ
-    Q = QuantumCircuit(n_qubits, name='Q')
-
-    # 1. Oracle S_χ
-    Q.compose(build_oracle(), inplace=True)
-
-    # 2. A†
-    Q.compose(A.inverse(), inplace=True)
-
-    # 3. Zero reflection S_0
-    Q.compose(build_zero_reflection(), inplace=True)
-
-    # 4. A
-    Q.compose(A, inplace=True)
-
-    # Decompose to basis gates
-    prev_depth = 0
-    while Q.depth() != prev_depth:
-        prev_depth = Q.depth()
-        Q = Q.decompose()
-    print(f"    Q depth={Q.depth()}, Q gates={Q.size()}")
-    print(f"    Q qubits={Q.num_qubits}, asset_qubits={num_asset_qubits}")
+    # Let Qiskit build Q = A · S0 · A† · S_χ (proper Grover iterate)
+    Q = GroverOperator(
+        oracle=oracle,
+        state_preparation=A,
+        reflection_qubits=list(range(A.num_qubits)),  # reflect over full register used by A
+        insert_barriers=False,
+    )
 
     problem = EstimationProblem(
         state_preparation=A,
         grover_operator=Q,
         objective_qubits=[obj],
     )
+
+    iae = IterativeAmplitudeEstimation(
+        epsilon_target=float(epsilon),
+        alpha=float(alpha_fail),
+        sampler=sampler_v2,
+    )
+
+    res = iae.estimate(problem)
+    print(f"    Q depth={Q.depth()}, Q gates={Q.size()}")
+    print(f"    Q qubits={Q.num_qubits}, asset_qubits={num_asset_qubits}")
+
+    # problem = EstimationProblem(
+    #     state_preparation=A,
+    #     grover_operator=Q,
+    #     objective_qubits=[obj],
+    # )
     # A, obj = _build_threshold_stateprep(
     #     stateprep_asset_only=stateprep_asset_only,
     #     num_asset_qubits=num_asset_qubits,
@@ -565,12 +599,12 @@ def _estimate_tail_prob_iae(
     #     objective_qubits=[obj],
     # )
 
-    iae = IterativeAmplitudeEstimation(
-        epsilon_target=float(epsilon),
-        alpha=float(alpha_fail),
-        sampler=sampler_v2,
-    )
-    res = iae.estimate(problem)
+    # iae = IterativeAmplitudeEstimation(
+    #     epsilon_target=float(epsilon),
+    #     alpha=float(alpha_fail),
+    #     sampler=sampler_v2,
+    # )
+    # res = iae.estimate(problem)
     p_hat_raw = float(getattr(res, "estimation", np.nan))
     ci = getattr(res, "confidence_interval", (np.nan, np.nan))
     print(f"    DEBUG: p_hat={p_hat_raw:.6f}, CI=[{ci[0]:.6f}, {ci[1]:.6f}], threshold_idx={threshold_index}")
@@ -629,21 +663,33 @@ def solve_var_bisect_quantum(
 
     total_cost = 0
     cache = {}  # Cache results to avoid recomputation
+    import threading
+    _sampler_lock = threading.Lock()
+    _cache_lock = threading.Lock()
 
-    def estimate_at(idx: int) -> Tuple[int, EstResult]:
-        if idx in cache:
-            return idx, cache[idx]
-        est = _estimate_tail_prob_iae(
-            sampler_v2=sampler_v2,
-            stateprep_asset_only=stateprep_asset_only,
-            num_asset_qubits=num_asset_qubits,
-            threshold_index=idx,
-            epsilon=epsilon,
-            alpha_fail=alpha_fail,
-        )
-        cache[idx] = est
+    def estimate_at(idx: int):
+        with _cache_lock:
+            if idx in cache:
+                return idx, cache[idx]
+
+        with _sampler_lock:
+            if idx in cache:
+                return idx, cache[idx]
+            est = _estimate_tail_prob_iae(
+                sampler_v2=sampler_v2,
+                stateprep_asset_only=stateprep_asset_only,
+                num_asset_qubits=num_asset_qubits,
+                threshold_index=idx,
+                epsilon=epsilon,
+                alpha_fail=alpha_fail,
+            )
+            cache[idx] = est
+            return idx, est
+
+        with _cache_lock:
+            cache[idx] = est
+
         return idx, est
-
     # Phase 1: Parallel probe to find initial range
     num_probes = min(7, n // 2)
     probe_indices = [int(n * (i + 1) / (num_probes + 1)) for i in range(num_probes)]
