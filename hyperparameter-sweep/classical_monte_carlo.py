@@ -17,6 +17,7 @@ def estimate_var_classical(
         prob_tol: float = None,
         max_steps: int = 64,
 ) -> dict:
+    import scipy.stats as st
     """
     Estimate VaR using optimized classical Monte Carlo.
 
