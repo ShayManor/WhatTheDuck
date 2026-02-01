@@ -352,8 +352,11 @@ def _estimate_tail_prob_iae(
     )
     print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
 
-
-    problem = EstimationProblem(state_preparation=A, objective_qubits=[obj])
+    problem = EstimationProblem(
+        state_preparation=A,
+        objective_qubits=[obj],
+        is_good_state=lambda bitstr: bitstr[obj] == "1",
+    )
 
     iae = IterativeAmplitudeEstimation(
         epsilon_target=float(epsilon),
