@@ -511,6 +511,8 @@ def cmd_run(args: argparse.Namespace) -> None:
             )
 
             err = abs(var_hat - dd["ref_var"]) / (abs(dd["ref_var"]) + 1e-9)
+            print(f"  [{dd['name']}] var_hat={var_hat:.4f}, ref={dd['ref_var']:.4f}, err={err:.6f}, cost={cost}")
+
             total_cost += float(cost)
             total_err += float(err)
             max_err = max(max_err, float(err))
