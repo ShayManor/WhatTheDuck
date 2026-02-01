@@ -25,20 +25,16 @@ NUM_QUBITS = 7  # Discretization resolution
 GLOBAL_INDEX: int = 0
 
 
-def get_log_normal_probabilities(
+def get_normal_probabilities(
     mu: float, sigma: float, num_points: int
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Generate log-normal probability distribution for asset values."""
-    log_normal_mean = np.exp(mu + sigma**2 / 2)
-    log_normal_variance = (np.exp(sigma**2) - 1) * np.exp(2 * mu + sigma**2)
-    log_normal_stddev = np.sqrt(log_normal_variance)
-
+    """Generate normal (Gaussian) probability distribution for asset values."""
     # Cut distribution at ±3σ from mean
-    low = np.maximum(0, log_normal_mean - 3 * log_normal_stddev)
-    high = log_normal_mean + 3 * log_normal_stddev
+    low = mu - 3 * sigma
+    high = mu + 3 * sigma
     
     x = np.linspace(low, high, num_points)
-    probs = scipy.stats.lognorm.pdf(x, s=sigma, scale=np.exp(mu))
+    probs = scipy.stats.norm.pdf(x, loc=mu, scale=sigma)
     
     return x, probs
 
@@ -179,7 +175,7 @@ def var_parameter_sweep(
         output_path = f"{new_base}{ext}"
     
     # Generate probability distribution
-    grid_points, prob_density = get_log_normal_probabilities(mu, sigma, 2**num_qubits)
+    grid_points, prob_density = get_normal_probabilities(mu, sigma, 2**num_qubits)
     probs = (prob_density / np.sum(prob_density)).tolist()
     
     # CSV structure
