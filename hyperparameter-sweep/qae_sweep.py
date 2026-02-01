@@ -277,17 +277,18 @@ def _load_stateprep_qasm(qasm_path: Path):
 
 def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
     """
-    Create an Aer Sampler configured for GPU when available.
+    Create an Aer backend configured for GPU when available.
     """
-    from qiskit_aer.primitives import Sampler
+    from qiskit_aer import AerSimulator
 
     backend_options = {"method": method, "seed_simulator": int(seed)}
     if device.upper() == "GPU":
         backend_options["device"] = "GPU"
 
-    run_options = {"shots": int(default_shots)}
+    backend = AerSimulator(**backend_options)
+    backend._shots = int(default_shots)  # Store for QuantumInstance
 
-    return Sampler(backend_options=backend_options, run_options=run_options)
+    return backend
 def _build_threshold_stateprep(
     stateprep_asset_only,
     num_asset_qubits: int,
