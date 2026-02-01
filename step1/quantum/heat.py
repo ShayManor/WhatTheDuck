@@ -60,7 +60,7 @@ def create_professional_heatmap(
     title: str = None,
     cmap: str = 'YlOrRd',
     use_log_scale: bool = True,
-    figsize: tuple = (12, 8),
+    figsize: tuple = (24, 8),
     dpi: int = 300
 ):
     """
@@ -122,7 +122,7 @@ def create_professional_heatmap(
     
     # Title
     if title is None:
-        metric_name = "Measurement Shots" if metric == "shots" else "Grover Operator Calls"
+        metric_name = "Measurements" if metric == "shots" else "Grover Operator Calls"
         title = f'Resource Requirements: {metric_name}\nvs IQAE Precision and VaR Confidence Level'
     
     ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
@@ -310,19 +310,19 @@ def create_all_visualizations(
     )
     
     # 2. Individual heatmap: Grover calls
-    print("Creating Grover calls heatmap...")
-    create_professional_heatmap(
-        df,
-        metric='grover_calls',
-        output_path=os.path.join(output_dir, "heatmap_grover_calls.png"),
-        cmap='YlOrRd',
-        use_log_scale=True,
-        dpi=dpi
-    )
+    # print("Creating Grover calls heatmap...")
+    # create_professional_heatmap(
+    #     df,
+    #     metric='grover_calls',
+    #     output_path=os.path.join(output_dir, "heatmap_grover_calls.png"),
+    #     cmap='YlOrRd',
+    #     use_log_scale=True,
+    #     dpi=dpi
+    # )
     
     # 3. Side-by-side comparison
-    print("Creating comparison heatmaps...")
-    create_comparison_heatmaps(df, output_dir=output_dir, dpi=dpi)
+    # print("Creating comparison heatmaps...")
+    # create_comparison_heatmaps(df, output_dir=output_dir, dpi=dpi)
     
     # 4. Accuracy heatmap
     print("Creating accuracy heatmap...")
@@ -342,10 +342,10 @@ def create_all_visualizations(
     print(f"  Max: {df['shots'].max():.0f}")
     print(f"  Mean: {df['shots'].mean():.0f}")
     
-    print(f"\nGrover Calls:")
-    print(f"  Min: {df['grover_calls'].min():.0f}")
-    print(f"  Max: {df['grover_calls'].max():.0f}")
-    print(f"  Mean: {df['grover_calls'].mean():.0f}")
+    # print(f"\nGrover Calls:")
+    # print(f"  Min: {df['grover_calls'].min():.0f}")
+    # print(f"  Max: {df['grover_calls'].max():.0f}")
+    # print(f"  Mean: {df['grover_calls'].mean():.0f}")
     
     # Accuracy stats
     df_clean = df.dropna(subset=['VaR_theoretical', 'VaR_predicted'])
@@ -367,7 +367,7 @@ def create_all_visualizations(
 if __name__ == "__main__":
     # Generate all visualizations
     create_all_visualizations(
-        csv_path="results/var_sweep_01.csv",
+        csv_path="results/mc_sweep.csv",
         output_dir="results",
         dpi=300  # High resolution for presentations
     )
