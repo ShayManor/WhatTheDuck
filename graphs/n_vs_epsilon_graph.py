@@ -90,6 +90,41 @@ rho = params["rho"]
 results_mc = results_mc.sort_values(by="N")
 results_qc = results_qc.sort_values(by="N")
 
+# ============================================================================
+# TREND LINE
+# ============================================================================
+
+def add_trend_line(ax, N, eps, color, label_prefix):
+    """
+    Fit and plot a power-law trend line: eps ~ C * N^{-alpha}
+    """
+    # Remove non-positive values just in case
+    mask = (N > 0) & (eps > 0)
+    N = N[mask]
+    eps = eps[mask]
+
+    logN = np.log10(N)
+    logE = np.log10(eps)
+
+    # Linear fit in log-log space
+    slope, intercept = np.polyfit(logN, logE, 1)
+    alpha = -slope
+    C = 10**intercept
+
+    # Smooth line for plotting
+    N_fit = np.logspace(np.log10(N.min()), np.log10(N.max()), 200)
+    eps_fit = C * N_fit**(-alpha)
+
+    ax.plot(
+        N_fit, eps_fit,
+        linestyle='-',
+        linewidth=2.5,
+        color=color,
+        alpha=0.9,
+        label=f"{label_prefix} trend: $N^{{-{alpha:.2f}}}$",
+        zorder=2
+    )
+
 
 # ============================================================================
 # VISUALIZATION HELPERS
@@ -153,6 +188,9 @@ ax1.plot(
 	color=COLOR_QC, alpha=0.8,
 	label='Quantum Estimate', zorder=3
 )
+
+add_trend_line(ax1, results_mc["N"], results_mc["Epsilon"], COLOR_MC, "Monte Carlo")
+add_trend_line(ax1, results_qc["N"], results_qc["Epsilon"], COLOR_QC, "Quantum")
 
 ax1.set_xscale('log')
 ax1.set_yscale('log')
