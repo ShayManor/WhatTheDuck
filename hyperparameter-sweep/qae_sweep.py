@@ -279,7 +279,7 @@ def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
     """
     Create an Aer Sampler configured for GPU when available.
     """
-    from qiskit_aer.primitives import Sampler
+    from qiskit_aer.primitives import Estimator
 
     backend_options = {"method": method, "seed_simulator": int(seed)}
     if device.upper() == "GPU":
@@ -350,6 +350,8 @@ def _estimate_tail_prob_iae(
         num_asset_qubits=num_asset_qubits,
         threshold_index=threshold_index,
     )
+    print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
+
 
     problem = EstimationProblem(state_preparation=A, objective_qubits=[obj])
 
@@ -364,7 +366,8 @@ def _estimate_tail_prob_iae(
         res = iae.estimate(problem)
     else:
         res = iae.run(problem)  # type: ignore
-
+    print(f"    IAE result type: {type(res)}, attrs: {dir(res)}")
+    print(f"    Result: {res}")
     # Extract estimation and CI
     p_hat = float(getattr(res, "estimation", getattr(res, "estimation_processed", np.nan)))
     ci = getattr(res, "confidence_interval", None)
