@@ -338,7 +338,6 @@ def _build_threshold_stateprep(
     # anc_wires = list(range(num_asset_qubits, num_asset_qubits + ancillas))
     # obj_wire = [num_asset_qubits + ancillas]
     #
-    # qc.append(comp, asset_wires + anc_wires + obj_wire)
     asset_wires = list(range(num_asset_qubits))
     anc_wires = list(range(num_asset_qubits, num_asset_qubits + ancillas))
     obj_wire = [num_asset_qubits + ancillas]  # keep obj at the end physically, that's fine
