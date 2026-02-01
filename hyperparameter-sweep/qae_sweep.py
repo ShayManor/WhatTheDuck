@@ -362,8 +362,20 @@ def _estimate_tail_prob_iae(
     )
     print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
 
+    problem = EstimationProblem(
+        state_preparation=A,
+        objective_qubits=[obj],
+        is_good_state=lambda bitstr: bitstr == "1",
+    )
 
-    problem = EstimationProblem(state_preparation=A, objective_qubits=[obj])
+    try:
+        grover = problem.grover_operator
+        if grover is not None:
+            print(f"    Grover: depth={grover.depth()}, gates={grover.size()}")
+        else:
+            print("    Grover operator is None!")
+    except Exception as e:
+        print(f"    Grover construction FAILED: {type(e).__name__}: {e}")
 
     iae = IterativeAmplitudeEstimation(
         epsilon_target=float(epsilon),
