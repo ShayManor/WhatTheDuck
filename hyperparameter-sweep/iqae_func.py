@@ -89,7 +89,7 @@ def run_all_dists(indir, outfile, seed=42):
 
 def run_single_dist(indir, outfile, dist_name="normal", seed=42):
     n_samples_list = np.unique(np.logspace(1, 7, 0).astype(int))
-    epsilons = np.linspace(1e-6, 1e-1, 50)
+    epsilons = np.linspace(1e-4, 1e-1, 50)
     alpha_fails = [0.05]
     var_alphas = [0.05]
 
