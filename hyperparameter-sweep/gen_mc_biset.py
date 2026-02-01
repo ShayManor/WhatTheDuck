@@ -29,7 +29,7 @@ def get_val(epsilon, alpha=0.05):
         grid,
         alpha=alpha,
         seed=np.random.randint(1, 10000),
-        confidence=1 - epsilon
+        epsilon=epsilon
     )
 
     return result['var'], true_var, result['total_samples']
