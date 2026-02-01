@@ -276,16 +276,18 @@ def _load_stateprep_qasm(qasm_path: Path):
 
 
 def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
-    from qiskit_aer import AerSimulator
+    """
+    Create an Aer Sampler configured for GPU when available.
+    """
+    from qiskit_aer.primitives import Sampler
 
     backend_options = {"method": method, "seed_simulator": int(seed)}
     if device.upper() == "GPU":
         backend_options["device"] = "GPU"
 
-    backend = AerSimulator(**backend_options)
-    backend._shots = int(default_shots)
+    run_options = {"shots": int(default_shots)}
 
-    return backend
+    return Sampler(backend_options=backend_options, run_options=run_options)
 def _build_threshold_stateprep(
     stateprep_asset_only,
     num_asset_qubits: int,
@@ -316,57 +318,78 @@ def _build_threshold_stateprep(
 
     # Transpile the full circuit to basis gates Aer understands
     backend = AerSimulator()
-    qc_transpiled = transpile(qc, backend=backend, optimization_level=1)
-
-    objective_index = obj_wire[0]
+    qc_transpiled = transpile(
+        qc,
+        backend=backend,
+        optimization_level=0,
+        layout_method="trivial",
+        routing_method="none",
+    )
+    objective_index = obj_wire[0]  # now stable
     return qc_transpiled, objective_index
 
 
+
 def _estimate_tail_prob_iae(
-        *,
-        sampler_v2,
-        stateprep_asset_only,
-        num_asset_qubits: int,
-        threshold_index: int,
-        epsilon: float,
-        alpha_fail: float,
+    *,
+    sampler_v2,
+    stateprep_asset_only,
+    num_asset_qubits: int,
+    threshold_index: int,
+    epsilon: float,
+    alpha_fail: float,
 ) -> EstResult:
     """
-    Manually run IAE by executing circuits directly on backend.
+    Run iterative amplitude estimation for this threshold index.
+    Returns p_hat, CI, and oracle-query cost (as reported by Qiskit result when available).
     """
-    from qiskit import QuantumCircuit
-    import numpy as np
+    # Newer package
+    try:
+        from qiskit_algorithms import IterativeAmplitudeEstimation, EstimationProblem
+    except Exception:
+        # Older layouts (best-effort compatibility)
+        from qiskit.algorithms import IterativeAmplitudeEstimation, EstimationProblem  # type: ignore
 
     A, obj = _build_threshold_stateprep(
         stateprep_asset_only=stateprep_asset_only,
         num_asset_qubits=num_asset_qubits,
         threshold_index=threshold_index,
     )
+    print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
 
-    # Manually execute circuit with amplitude amplification
-    backend = sampler_v2  # It's actually a backend
-    shots = backend._shots
 
-    # Run base circuit
-    qc = A.copy()
-    qc.measure_all()
+    problem = EstimationProblem(state_preparation=A, objective_qubits=[obj])
 
-    from qiskit import transpile
-    qc_trans = transpile(qc, backend)
-    result = backend.run(qc_trans, shots=shots).result()
-    counts = result.get_counts()
+    iae = IterativeAmplitudeEstimation(
+        epsilon_target=float(epsilon),
+        alpha=float(alpha_fail),
+        sampler=sampler_v2,
+    )
 
-    # Count objective qubit = 1
-    total = sum(counts.values())
-    good = sum(v for k, v in counts.items() if k[-(obj + 1)] == '1')
-    p_hat = float(good) / float(total)
+    # API can be estimate() or run() depending on version.
+    if hasattr(iae, "estimate"):
+        res = iae.estimate(problem)
+    else:
+        res = iae.run(problem)  # type: ignore
+    print(f"    IAE result type: {type(res)}, attrs: {dir(res)}")
+    print(f"    Result: {res}")
+    # Extract estimation and CI
+    p_hat = float(getattr(res, "estimation", getattr(res, "estimation_processed", np.nan)))
+    ci = getattr(res, "confidence_interval", None)
+    if ci is None:
+        # Some versions store it under "confidence_interval_processed"
+        ci = getattr(res, "confidence_interval_processed", (0.0, 1.0))
+    ci_low, ci_high = float(ci[0]), float(ci[1])
 
-    # Simple confidence interval (Clopper-Pearson would be better)
-    from scipy.stats import beta as beta_dist
-    ci_low = float(beta_dist.ppf(alpha_fail / 2, good, total - good + 1)) if good > 0 else 0.0
-    ci_high = float(beta_dist.ppf(1 - alpha_fail / 2, good + 1, total - good)) if good < total else 1.0
+    # Cost: prefer official attribute if present
+    cost = getattr(res, "num_oracle_queries", None)
+    if cost is None:
+        cost = getattr(res, "num_queries", None)
+    if cost is None:
+        cost = 0
 
-    return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=shots)
+    return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=int(cost))
+
 
 def solve_var_bisect_quantum(
     *,
