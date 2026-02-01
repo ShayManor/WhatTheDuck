@@ -957,7 +957,7 @@ def main() -> None:
     apc.add_argument("--qasm3", action="store_true", help="Also request OpenQASM 3 output (in addition to 2)")
     apc.set_defaults(func=cmd_compile)
 
-    apr = sub.add_parser("run", help="Run algorithmic-only sweep using QASM + Qiskit (no Classiq).")
+    apr = sub.add_parser("run", help="Run algorithmic-only sweep")
     apr.add_argument("--indir", type=str, required=True)
     apr.add_argument("--trials", type=int, default=40)
     apr.add_argument("--jobs", type=int, default=1, help="Optuna parallel jobs (careful on single GPU).")
