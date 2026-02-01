@@ -17,8 +17,8 @@ from classiq.applications.iqae.iqae import IQAE
 
 
 # Portfolio parameters
-MU = 0.15  # Expected return
-SIGMA = 0.20  # Volatility
+MU = 0  # Expected return
+SIGMA = 1  # Volatility
 NUM_QUBITS = 7  # Discretization resolution
 
 # Global threshold used by quantum payoff oracle
@@ -140,7 +140,7 @@ def run_iqae_estimation(
 
 def var_parameter_sweep(
     epsilons: List[float],
-    alpha_vars: List[float],
+    alpha: float,
     mu: float = MU,
     sigma: float = SIGMA,
     num_qubits: int = NUM_QUBITS,
@@ -198,16 +198,17 @@ def var_parameter_sweep(
     csv_file.flush()
     
     print(f"Writing results to: {output_path}")
-    print(f"Starting sweep: {len(epsilons)} epsilons × {len(alpha_vars)} confidence levels")
+    print(f"Starting sweep: {len(epsilons)} epsilons")
     
     try:
-        for alpha_var in alpha_vars:
-            confidence = 1 - alpha_var
-            print(f"\n=== Alpha: {alpha_var:.3f} (Confidence: {confidence:.3f}) ===")
+        # for alpha_var in alpha_vars:
+        for alpha_iqae in [alpha_iqae]:
+            confidence = 1 - alpha
+            print(f"\n=== Alpha_iqae: {alpha_iqae:.3f} (Confidence: {confidence:.3f}) ===")
             
             # Calculate classical VaR
-            var_theoretical = calculate_classical_var(grid_points, probs, alpha_var)
-            var_index = get_var_index(probs, alpha_var)
+            var_theoretical = calculate_classical_var(grid_points, probs, alpha)
+            var_index = get_var_index(probs, alpha)
             GLOBAL_INDEX = int(var_index)
             
             print(f"Classical VaR: {var_theoretical:.4f} (index {var_index})")
@@ -267,20 +268,20 @@ def var_parameter_sweep(
 
 if __name__ == "__main__":
     # Define sweep parameters
-    E_COUNT = 20
+    E_COUNT = 30
     E_MAX = 0.1
-    E_MIN = 0.0001
+    E_MIN = 0.00005
 
-    A_COUNT = 20
-    A_MIN = 0.01
-    A_MAX = 0.10
+    # AQ_COUNT = 10
+    # AQ_MIN = 0.1
+    # AQ_MAX = 0.005
 
     epsilons = np.logspace(np.log10(E_MAX), np.log10(E_MIN), E_COUNT).tolist()
-    var_alphas = np.linspace(A_MIN, A_MAX, A_COUNT).tolist()
+    # iqae_alphas = np.linspace(AQ_MIN, AQ_MAX, AQ_COUNT).tolist()
     
     var_parameter_sweep(
         epsilons=epsilons,
-        alpha_vars=var_alphas,
+        alpha=0.5,
         mu=0.15,
         sigma=0.20,
         num_qubits=7,

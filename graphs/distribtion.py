@@ -15,42 +15,41 @@ plt.rcParams['axes.labelsize'] = 12
 plt.rcParams['axes.titlesize'] = 14
 plt.rcParams['xtick.labelsize'] = 10
 plt.rcParams['ytick.labelsize'] = 10
-plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['legend.fontsize'] = 9
 plt.rcParams['figure.titlesize'] = 16
 plt.rcParams['mathtext.fontset'] = 'stix'
 
-# Professional color palette
-COLOR_PRIMARY = '#1e3a8a'      # Deep blue
-COLOR_SECONDARY = '#3b82f6'    # Bright blue
-COLOR_ACCENT = '#f59e0b'       # Amber accent
-COLOR_DANGER = '#dc2626'       # Red for theoretical line
+# Professional color palette - different colors for each T
+COLORS = {
+    1: '#1e3a8a',  # Deep blue
+    2: '#3b82f6',  # Bright blue
+    3: '#6366f1',  # Indigo
+    4: '#8b5cf6',  # Purple
+    5: '#a855f7',  # Lighter purple
+}
 COLOR_GRID = '#e5e7eb'         # Light gray grid
 COLOR_TEXT = '#1f2937'         # Dark gray text
-COLOR_BOUND_UPPER = '#6366f1'  # Indigo for upper bound
-COLOR_BOUND_LOWER = '#8b5cf6'  # Purple for lower bound
-COLOR_DIST = '#3b82f6'         # Distribution color
 
 # ============================================================================
 # SIMULATION PARAMETERS
 # ============================================================================
 
 # Market parameters
-mu = 0.15                      # Mean daily return (15%)
-sigma = 0.20                   # Daily volatility (20%)
+mu = 0.15                         # Mean daily return
+sigma = 0.2                      # Daily volatility
 confidence_level = 0.95        # VaR confidence level
 
-# Multi-day and distribution settings
-T = 1                          # Number of days for multi-day VaR
+# Distribution settings
+T_values = [1, 2, 3, 4, 5]     # Time horizons to plot
 dist = "gaussian"              # Distribution: "gaussian", "student-t", "skewnorm"
 df = 3                         # Degrees of freedom for Student-t
 skew_alpha = 7.0               # Skew parameter for skew-normal
-rho = 0.0                      # AR(1) correlation coefficient
+rho = 0.5                      # AR(1) correlation coefficient (set to non-zero to see effect)
 
 # Simulation settings
-theoretical_N = 10**7 * 2 # Samples for theoretical VaR estimation
+theoretical_N = 10**6          # Samples for theoretical VaR estimation
 
-
-OUTPUT = "output/distribution.png"
+OUTPUT = "output/distribution_overlay.png"
 
 
 # ============================================================================
@@ -80,15 +79,41 @@ def create_legend(ax, **kwargs):
     return legend
 
 
-def get_distribution_name(mu, sigma, dist, T, rho, df, skew_alpha):
+def get_distribution_name(mu, sigma, dist, rho, df, skew_alpha):
     """Get formatted distribution name for labels."""
+    rho_str = f", ρ={rho}" if rho != 0 else ""
     if dist == "gaussian":
-        return f"Gaussian - T={T}, ρ={rho}, μ={mu}, σ={sigma}"
+        return f"Gaussian - μ={mu}, σ={sigma}{rho_str}"
     elif dist == "student-t":
-        return f"Student-t - T={T}, ρ={rho}, μ={mu}, σ={sigma}, df={df}"
+        return f"Student-t - μ={mu}, σ={sigma}, df={df}{rho_str}"
     elif dist == "skewnorm":
-        return f"Skew-Normal - T={T}, ρ={rho}, μ={mu}, σ={sigma}, α={skew_alpha}"
+        return f"Skew-Normal - μ={mu}, σ={sigma}, α={skew_alpha}{rho_str}"
     return dist
+
+
+def simulate_returns(mu, sigma, dist, T, rho, theoretical_N, df=3, skew_alpha=7.0):
+    """Simulate returns for a given time horizon with AR correlation."""
+    # Generate base returns
+    if dist == "gaussian":
+        daily_returns = np.random.normal(mu, sigma, size=(theoretical_N, T))
+    elif dist == "student-t":
+        daily_returns = mu + sigma * np.random.standard_t(df, size=(theoretical_N, T))
+    elif dist == "skewnorm":
+        daily_returns = mu + sigma * skewnorm.rvs(skew_alpha, size=(theoretical_N, T))
+    
+    # Apply AR(1) correlation if rho != 0 and T > 1
+    if rho != 0.0 and T > 1:
+        correlated_returns = np.zeros_like(daily_returns)
+        correlated_returns[:, 0] = daily_returns[:, 0]
+        for t in range(1, T):
+            innovation = (daily_returns[:, t] - mu) * np.sqrt(1 - rho**2)
+            correlated_returns[:, t] = mu + rho * (correlated_returns[:, t-1] - mu) + innovation
+        daily_returns = correlated_returns
+    
+    # Sum returns across time
+    total_returns = daily_returns.sum(axis=1)
+    return total_returns
+
 
 # ============================================================================
 # PLOT
@@ -97,81 +122,78 @@ def get_distribution_name(mu, sigma, dist, T, rho, df, skew_alpha):
 # Make output directory if it doesn't exist
 os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
 
-print("\nGenerating distribution visualization...")
-
-# Simulate large sample for distribution
-if dist == "gaussian":
-    daily_returns = np.random.normal(mu, sigma, size=(theoretical_N, T))
-elif dist == "student-t":
-    daily_returns = mu + sigma * np.random.standard_t(df, size=(theoretical_N, T))
-elif dist == "skewnorm":
-    daily_returns = mu + sigma * skewnorm.rvs(skew_alpha, size=(theoretical_N, T))
-
-# Apply correlation
-if rho != 0.0 and T > 1:
-    correlated_returns = np.zeros_like(daily_returns)
-    correlated_returns[:, 0] = daily_returns[:, 0]
-    for t in range(1, T):
-        innovation = (daily_returns[:, t] - mu) * np.sqrt(1 - rho**2)
-        correlated_returns[:, t] = mu + rho * (correlated_returns[:, t-1] - mu) + innovation
-    daily_returns = correlated_returns
-
-total_returns = daily_returns.sum(axis=1)
-# losses = -total_returns
-var_for_plot = np.quantile(total_returns, 1 - confidence_level)
+print("\nGenerating overlaid distribution visualization...")
 
 # Create distribution figure
-fig_dist, ax_dist = plt.subplots(figsize=(10, 6))
+fig_dist, ax_dist = plt.subplots(figsize=(12, 7))
 fig_dist.patch.set_facecolor('white')
 ax_dist.set_facecolor('#fafafa')
 
-# Histogram
-counts, bins, patches = ax_dist.hist(
-    total_returns, bins=100, alpha=0.7, color=COLOR_DIST,
-    density=True, edgecolor='white', linewidth=0.5, label='Simulated Returns'
-)
+# Store all returns for determining plot limits
+all_returns = []
+var_lines = []
 
-# VaR line
-ax_dist.axvline(
-    x=var_for_plot, color=COLOR_DANGER, linestyle='--',
-    linewidth=2.5, alpha=0.9, label=f'VaR at {int(confidence_level*100)}%', zorder=5
-)
-
-# Shade VaR tail
-var_mask = bins[:-1] <= var_for_plot
-if np.any(var_mask):
-    for i, (patch, is_tail) in enumerate(zip(patches, var_mask)):
-        if is_tail:
-            patch.set_facecolor(COLOR_DANGER)
-            patch.set_alpha(0.4)
+# Simulate and plot for each T value
+for T in T_values:
+    print(f"Simulating T={T}...")
+    
+    # Simulate returns
+    total_returns = simulate_returns(
+        mu, sigma, dist, T, rho, theoretical_N, df, skew_alpha
+    )
+    all_returns.append(total_returns)
+    
+    # Calculate VaR
+    var_value = np.quantile(total_returns, 1 - confidence_level)
+    var_lines.append((T, var_value))
+    
+    # Calculate opacity: increase opacity with T
+    # T=1 -> alpha=0.3, T=5 -> alpha=0.7
+    alpha_hist = 0.3 + (T - 1) * 0.1
+    alpha_line = 0.5 + (T - 1) * 0.1
+    
+    # Plot histogram
+    ax_dist.hist(
+        total_returns, bins=200, alpha=alpha_hist, color=COLORS[T],
+        density=True, edgecolor='none', 
+        label=f'T={T} (VaR: {var_value:.3f})'
+    )
+    
+    # Plot VaR line
+    ax_dist.axvline(
+        x=var_value, color=COLORS[T], linestyle='--',
+        linewidth=2, alpha=alpha_line, zorder=5
+    )
 
 # Styling
+subtitle = get_distribution_name(mu, sigma, dist, rho, df, skew_alpha)
 style_axes(
     fig_dist,
     ax_dist,
-    'Return Distribution',
-    get_distribution_name(mu, sigma, dist, T, rho, df, skew_alpha),
-    f'P&L Return',
+    'Return Distribution Across Time Horizons',
+    subtitle,
+    'Cumulative P&L Return',
     'Probability Density'
 )
-create_legend(ax_dist, loc='best')
 
-# Add statistics text box
-stats_text = (
-    f'Statistics:\n'
-    f'Mean: {np.mean(total_returns):.5f}\n'
-    f'Std Dev: {np.std(total_returns):.5f}\n'
-    f'VaR: {var_for_plot:.5f}\n'
-    f'N: {theoretical_N:,}'
+# Create legend with VaR values
+create_legend(ax_dist, loc='upper left', ncol=1)
+
+# Add info text box
+info_text = (
+    f'95% VaR by Horizon:\n' +
+    '\n'.join([f'T={T}: {var:.3f}' for T, var in var_lines])
 )
 ax_dist.text(
-    0.02, 0.98, stats_text, transform=ax_dist.transAxes,
-    fontsize=10, verticalalignment='top',
+    0.98, 0.98, info_text, transform=ax_dist.transAxes,
+    fontsize=9, verticalalignment='top', horizontalalignment='right',
     bbox=dict(boxstyle='round,pad=0.5', facecolor='white',
-              edgecolor=COLOR_GRID, alpha=0.9)
+              edgecolor=COLOR_GRID, alpha=0.95)
 )
 
 plt.tight_layout()
 plt.savefig(OUTPUT, bbox_inches='tight', facecolor='white', edgecolor='none')
 print(f"✓ Saved: {OUTPUT}")
 plt.close()
+
+print("\nDone!")
