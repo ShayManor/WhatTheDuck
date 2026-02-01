@@ -42,7 +42,7 @@ T = 5                          # Number of days for multi-day VaR
 dist = "gaussian"              # Distribution: "gaussian", "student-t", "skewnorm"
 df = 3                         # Degrees of freedom for Student-t
 skew_alpha = 7.0               # Skew parameter for skew-normal
-rho = 0.0                      # AR(1) correlation coefficient
+rho = 0.5                      # AR(1) correlation coefficient
 
 
 SAMPLE_COUNT = 5
