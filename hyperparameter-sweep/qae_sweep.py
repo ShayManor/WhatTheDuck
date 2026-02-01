@@ -388,6 +388,9 @@ def _estimate_tail_prob_iae(
     # API can be estimate() or run() depending on version.
     # if hasattr(iae, "estimate"):
     res = iae.estimate(problem)
+    p_hat_raw = float(getattr(res, "estimation", np.nan))
+    ci = getattr(res, "confidence_interval", (np.nan, np.nan))
+    print(f"    DEBUG: p_hat={p_hat_raw:.6f}, CI=[{ci[0]:.6f}, {ci[1]:.6f}], threshold_idx={threshold_index}")
     print(f"    DEBUG: powers={getattr(res, 'powers', None)}, shots={getattr(res, 'shots', None)}")
 
     # else:
