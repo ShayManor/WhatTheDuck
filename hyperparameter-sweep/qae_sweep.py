@@ -362,20 +362,22 @@ def _estimate_tail_prob_iae(
     )
     print(f"    Circuit depth={A.depth()}, gates={A.size()}, qubits={A.num_qubits}")  # DEBUG
 
+    from qiskit.circuit.library import GroverOperator
+
+    # Explicitly build Grover operator with decomposed circuit
+    A_decomposed = A.decompose().decompose().decompose()
+    grover_op = GroverOperator(
+        oracle=A_decomposed,
+        state_preparation=A_decomposed,
+        reflection_qubits=list(range(A.num_qubits - 1)),  # All except objective
+    )
+
     problem = EstimationProblem(
         state_preparation=A,
+        grover_operator=grover_op,
         objective_qubits=[obj],
         is_good_state=lambda bitstr: bitstr == "1",
     )
-
-    try:
-        grover = problem.grover_operator
-        if grover is not None:
-            print(f"    Grover: depth={grover.depth()}, gates={grover.size()}")
-        else:
-            print("    Grover operator is None!")
-    except Exception as e:
-        print(f"    Grover construction FAILED: {type(e).__name__}: {e}")
 
     iae = IterativeAmplitudeEstimation(
         epsilon_target=float(epsilon),
