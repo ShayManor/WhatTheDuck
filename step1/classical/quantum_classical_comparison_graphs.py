@@ -128,6 +128,36 @@ def load_classical_convergence(path: str) -> Dict[int, Dict[str, float]]:
     return stats
 
 
+
+def add_trend_line(ax, N, eps, color, label_prefix):
+    """
+    Fit and plot a power-law trend line: eps ~ C * N^{-alpha}
+    """
+    mask = (N > 0) & (eps > 0)
+    N = N[mask]
+    eps = eps[mask]
+
+    logN = np.log10(N)
+    logE = np.log10(eps)
+
+    slope, intercept = np.polyfit(logN, logE, 1)
+    alpha = -slope
+    C = 10**intercept
+
+    N_fit = np.logspace(np.log10(N.min()), np.log10(N.max()), 200)
+    eps_fit = C * N_fit**(-alpha)
+
+    ax.plot(
+        N_fit, eps_fit,
+        linestyle="--",
+        linewidth=2.5,
+        color=color,
+        alpha=0.9,
+        label=f"{label_prefix} fit: $N^{{-{alpha:.2f}}}$",
+        zorder=2
+    )
+
+
 def error_vs_budget_plot(
     mc_n: np.ndarray,
     mc_err: np.ndarray,
@@ -157,25 +187,40 @@ def error_vs_budget_plot(
         label="IQAE (probability error)",
         marker="o", markersize=4, alpha=0.9
     )
-    ax.fill_between(
-        iqae_budget, iqae_err_low, iqae_err_high,
-        alpha=0.12, zorder=2, label="IQAE ±1σ (probability)"
-    )
+    # ax.fill_between(
+    #     iqae_budget, iqae_err_low, iqae_err_high,
+    #     alpha=0.12, zorder=2, label="IQAE ±1σ (probability)"
+    # )
 
     # Reference slope lines
-    x_line = np.array([min(mc_n.min(), iqae_budget.min()), max(mc_n.max(), iqae_budget.max())])
-    c_half = mc_err[0] * math.sqrt(mc_n[0])
-    c_one = iqae_err[0] * iqae_budget[0]
-    ax.plot(x_line, c_half / np.sqrt(x_line), "--", alpha=0.8, label="slope -1/2")
-    ax.plot(x_line, c_one / x_line, "-.", alpha=0.8, label="slope -1")
+    # x_line = np.array([min(mc_n.min(), iqae_budget.min()), max(mc_n.max(), iqae_budget.max())])
+    # c_half = mc_err[0] * math.sqrt(mc_n[0])
+    # c_one = iqae_err[0] * iqae_budget[0]
+    # ax.plot(x_line, c_half / np.sqrt(x_line), "--", alpha=0.8, label="slope -1/2")
+    # ax.plot(x_line, c_one / x_line, "-.", alpha=0.8, label="slope -1")
+
+    add_trend_line(
+        ax,
+        mc_n,
+        mc_err,
+        color=ax.lines[0].get_color(),
+        label_prefix="MC"
+    )
+    add_trend_line(
+        ax,
+        iqae_budget,
+        iqae_err,
+        color=ax.lines[1].get_color(),
+        label_prefix="IQAE"
+    )
 
     ax.set_xscale("log")
     ax.set_yscale("log")
     style_axes(
         ax,
-        "Error vs Query Budget (Money Plot)",
-        "Oracle Calls / Samples (log)",
-        "Estimation Error (log)",
+        "Error Scaling: Classical vs Quantum",
+        "Oracle Calls / Samples [log]",
+        "Estimation Error [log]",
     )
     ax.legend(loc="best")
 
