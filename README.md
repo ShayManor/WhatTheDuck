@@ -8,5 +8,7 @@ Winning Repo
 - [x] Walk Days
 	- Simulate sampling from the same distribution over multiple days and plot a few paths + the mean
 	- [x] Add the distribution info to the graph
-- [ ]
-- [ ] 
+- [ ] Converence comparisons
+- [ ] N vs Epsilon comparisons
+- [ ] Distribution viewer
+- 3d attempt??
