@@ -465,7 +465,7 @@ def _estimate_tail_prob_iae(
     #     objective_qubits=[obj],
     # )
     from qiskit.circuit.library import GroverOperator
-
+    from qiskit import QuantumCircuit
     A, obj = _build_threshold_stateprep(
         stateprep_asset_only=stateprep_asset_only,
         num_asset_qubits=num_asset_qubits,
