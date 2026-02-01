@@ -276,9 +276,6 @@ def _load_stateprep_qasm(qasm_path: Path):
 
 
 def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
-    """
-    Create an Aer backend configured for GPU when available.
-    """
     from qiskit_aer import AerSimulator
 
     backend_options = {"method": method, "seed_simulator": int(seed)}
@@ -286,7 +283,7 @@ def _make_sampler_v2(device: str, method: str, seed: int, default_shots: int):
         backend_options["device"] = "GPU"
 
     backend = AerSimulator(**backend_options)
-    backend._shots = int(default_shots)  # Store for QuantumInstance
+    backend._shots = int(default_shots)
 
     return backend
 def _build_threshold_stateprep(
@@ -325,18 +322,20 @@ def _build_threshold_stateprep(
     return qc_transpiled, objective_index
 
 
-
 def _estimate_tail_prob_iae(
         *,
-        sampler_v2,  # Will actually pass backend instead
+        sampler_v2,
         stateprep_asset_only,
         num_asset_qubits: int,
         threshold_index: int,
         epsilon: float,
         alpha_fail: float,
 ) -> EstResult:
-    from qiskit_algorithms import IterativeAmplitudeEstimation, EstimationProblem
-    from qiskit.utils import QuantumInstance
+    """
+    Manually run IAE by executing circuits directly on backend.
+    """
+    from qiskit import QuantumCircuit
+    import numpy as np
 
     A, obj = _build_threshold_stateprep(
         stateprep_asset_only=stateprep_asset_only,
@@ -344,26 +343,30 @@ def _estimate_tail_prob_iae(
         threshold_index=threshold_index,
     )
 
-    problem = EstimationProblem(state_preparation=A, objective_qubits=[obj])
+    # Manually execute circuit with amplitude amplification
+    backend = sampler_v2  # It's actually a backend
+    shots = backend._shots
 
-    # Use QuantumInstance instead of Sampler for older versions
-    qi = QuantumInstance(sampler_v2, shots=sampler_v2._shots)  # sampler_v2 is actually backend
+    # Run base circuit
+    qc = A.copy()
+    qc.measure_all()
 
-    iae = IterativeAmplitudeEstimation(
-        epsilon_target=float(epsilon),
-        alpha=float(alpha_fail),
-        quantum_instance=qi,
-    )
+    from qiskit import transpile
+    qc_trans = transpile(qc, backend)
+    result = backend.run(qc_trans, shots=shots).result()
+    counts = result.get_counts()
 
-    res = iae.estimate(problem)
+    # Count objective qubit = 1
+    total = sum(counts.values())
+    good = sum(v for k, v in counts.items() if k[-(obj + 1)] == '1')
+    p_hat = float(good) / float(total)
 
-    # Extract results
-    p_hat = float(res.estimation)
-    ci = res.confidence_interval
-    ci_low, ci_high = float(ci[0]), float(ci[1])
-    cost = int(res.num_oracle_queries)
+    # Simple confidence interval (Clopper-Pearson would be better)
+    from scipy.stats import beta as beta_dist
+    ci_low = float(beta_dist.ppf(alpha_fail / 2, good, total - good + 1)) if good > 0 else 0.0
+    ci_high = float(beta_dist.ppf(1 - alpha_fail / 2, good + 1, total - good)) if good < total else 1.0
 
-    return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=cost)
+    return EstResult(p_hat=p_hat, ci_low=ci_low, ci_high=ci_high, cost_oracle_queries=shots)
 
 def solve_var_bisect_quantum(
     *,
