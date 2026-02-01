@@ -17,8 +17,8 @@ from classiq.applications.iqae.iqae import IQAE
 
 
 # Portfolio parameters
-MU = 0.15  # Expected return
-SIGMA = 0.20  # Volatility
+MU = 0  # Expected return
+SIGMA = 1  # Volatility
 NUM_QUBITS = 7  # Discretization resolution
 
 # Global threshold used by quantum payoff oracle
