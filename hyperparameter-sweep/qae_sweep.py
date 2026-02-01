@@ -366,8 +366,8 @@ def _estimate_tail_prob_iae(
         res = iae.estimate(problem)
     else:
         res = iae.run(problem)  # type: ignore
-    print(f"    IAE result type: {type(res)}, attrs: {dir(res)}")
-    print(f"    Result: {res}")
+    # print(f"    IAE result type: {type(res)}, attrs: {dir(res)}")
+    # print(f"    Result: {res}")
     # Extract estimation and CI
     p_hat = float(getattr(res, "estimation", getattr(res, "estimation_processed", np.nan)))
     ci = getattr(res, "confidence_interval", None)
